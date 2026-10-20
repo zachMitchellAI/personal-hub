@@ -1,0 +1,20 @@
+{
+  "name": "hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal hub — deterministic CLI over life.db (DESIGN.md layer 2). Zero npm dependencies.",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "hub": "node src/hub.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11"
+  }
+}

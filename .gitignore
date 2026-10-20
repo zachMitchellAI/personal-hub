@@ -1,0 +1,26 @@
+# --- never commit: personal data (privacy audit F1) ---
+*.vcf
+vcards_*.vcf
+
+# --- never commit: live data & secrets ---
+*.db
+*.db-wal
+*.db-shm
+life.db
+.env
+.env.*
+
+# --- build/deps ---
+node_modules/
+
+# --- logs & temp artifacts ---
+*.log
+*.db-journal
+tmp/
+
+# --- owner-private docs (privacy audit: KEEP-PRIVATE class) ---
+assessments/
+BUILD-STATE.md
+
+# --- OS noise ---
+.DS_Store
