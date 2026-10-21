@@ -74,9 +74,7 @@
       "indexes": {
         "people_slug_unique": {
           "name": "people_slug_unique",
-          "columns": [
-            "slug"
-          ],
+          "columns": ["slug"],
           "isUnique": true
         }
       },

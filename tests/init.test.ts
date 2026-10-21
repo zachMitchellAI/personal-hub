@@ -85,16 +85,14 @@ test('S1: bad migration rolls back fully — version unchanged, partial DDL gone
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
     assert.equal(uv.user_version, 0);
-    const leftover = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='keep_me'")
-      .all();
+    const leftover = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='keep_me'").all();
     assert.equal(leftover.length, 0, 'partial DDL must be rolled back');
   } finally {
     db.close();
   }
 });
 
-test('S1: unknown verb exits nonzero and names the verb', (t) => {
+test('S1: unknown verb exits nonzero and names the verb', () => {
   const r = runCli(['frobnicate']);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /unknown verb "frobnicate"/);
@@ -127,9 +125,7 @@ test('S1: good migration applies, bumps user_version, survives re-open', (t) => 
   // The table survives a fresh connection (prove persistence, not just in-memory state).
   const db = new DatabaseSync(dbPath);
   try {
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='people'")
-      .all();
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='people'").all();
     assert.equal(tables.length, 1);
   } finally {
     db.close();
