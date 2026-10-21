@@ -13,6 +13,7 @@ import type { VerbHandler } from './core/types.ts';
 import { cmdInit } from './commands/init.ts';
 import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
 import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
+import { cmdAddSubtask, cmdAddTask, cmdListTasks, cmdMarkSubtask, cmdSetTaskStatus } from './commands/tasks.ts';
 
 /**
  * Verb registry — the single source of truth for the verb → handler mapping.
@@ -30,6 +31,11 @@ const VERBS: Record<string, VerbHandler> = {
   'list-channels': cmdListChannels,
   'remove-channel': cmdRemoveChannel,
   'set-primary': cmdSetPrimary,
+  'add-task': cmdAddTask,
+  'set-task-status': cmdSetTaskStatus,
+  'list-tasks': cmdListTasks,
+  'add-subtask': cmdAddSubtask,
+  'mark-subtask': cmdMarkSubtask,
 };
 
 const PARSE_ARGS_OPTIONS = {
@@ -47,6 +53,18 @@ const PARSE_ARGS_OPTIONS = {
   value: { type: 'string' },
   source: { type: 'string' },
   primary: { type: 'boolean', default: false },
+  // S4 task/subtask flags. `done` is a string flag ("0"/"1") so `--done 0`
+  // works the same way as `--done 1` under parseArgs.
+  title: { type: 'string' },
+  context: { type: 'string' },
+  person: { type: 'string' },
+  status: { type: 'string' },
+  'due-date': { type: 'string' },
+  origin: { type: 'string' },
+  label: { type: 'string' },
+  done: { type: 'string' },
+  mirror: { type: 'boolean', default: false },
+  'trello-visible': { type: 'boolean', default: false },
 } as const;
 
 /**
