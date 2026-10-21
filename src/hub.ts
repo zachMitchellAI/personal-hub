@@ -13,6 +13,7 @@ import type { VerbHandler } from './core/types.ts';
 import { cmdInit } from './commands/init.ts';
 import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
 import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
+import { cmdAddInteraction, cmdListInteractions } from './commands/interactions.ts';
 import { cmdAddSubtask, cmdAddTask, cmdListTasks, cmdMarkSubtask, cmdSetTaskStatus } from './commands/tasks.ts';
 
 /**
@@ -36,6 +37,8 @@ const VERBS: Record<string, VerbHandler> = {
   'list-tasks': cmdListTasks,
   'add-subtask': cmdAddSubtask,
   'mark-subtask': cmdMarkSubtask,
+  'add-interaction': cmdAddInteraction,
+  'list-interactions': cmdListInteractions,
 };
 
 const PARSE_ARGS_OPTIONS = {
@@ -65,6 +68,12 @@ const PARSE_ARGS_OPTIONS = {
   done: { type: 'string' },
   mirror: { type: 'boolean', default: false },
   'trello-visible': { type: 'boolean', default: false },
+  // S5 interaction flags (kind already declared for add-channel above).
+  date: { type: 'string' },
+  channel: { type: 'string' },
+  summary: { type: 'string' },
+  days: { type: 'string' },
+  since: { type: 'string' },
 } as const;
 
 /**

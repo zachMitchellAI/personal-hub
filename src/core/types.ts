@@ -170,6 +170,44 @@ export interface SetTaskStatusStatus {
   completed_at: string | null;
 }
 
+/**
+ * Interaction fields shared by every interaction-flavored shape. `InteractionJson`
+ * is the full row contract; verb statuses extend it, adding only the `verb` literal.
+ */
+interface InteractionFields {
+  id: number;
+  /** Nullable — people-less interactions are valid per the S5 ticket. */
+  person_id: number | null;
+  /** Free text: call/email/meeting/interview/message… — no enum (DESIGN.md D3). */
+  kind: string;
+  /** Interaction's calendar date (YYYY-MM-DD); validated at the CLI layer. */
+  date: string;
+  /** Medium the interaction happened on (e.g. discord, phone, in-person). */
+  channel: string;
+  /** What happened — free text. */
+  summary: string;
+  created_at: string;
+}
+
+/** An interaction row as emitted by `--json` (snake_case CLI contract). */
+export interface InteractionJson extends InteractionFields {}
+
+/** `hub add-interaction --json` result: the created interaction, echoed. */
+export interface AddInteractionStatus extends InteractionFields {
+  verb: 'add-interaction';
+}
+
+/** `hub list-interactions --json` result. */
+export interface ListInteractionsStatus {
+  verb: 'list-interactions';
+  count: number;
+  /** Echo of --days (calendar-day window), or null when not used. */
+  days: number | null;
+  /** Echo of --since (window start date), or null when not used. */
+  since: string | null;
+  interactions: InteractionJson[];
+}
+
 /** `hub list-tasks --json` result. */
 export interface ListTasksStatus {
   verb: 'list-tasks';
@@ -245,6 +283,32 @@ export interface AddSubtaskValues extends CliValues {
 export interface MarkSubtaskValues extends CliValues {
   /** "0" or "1"; defaults to "1" (mark done). */
   done?: string;
+}
+
+/** Flags consumed by `hub add-interaction`. `kind`, `date`, `channel`, and `summary` are required at runtime (the handler re-checks). */
+export interface AddInteractionValues extends CliValues {
+  /** Interaction kind — free text, required (NOT NULL column). */
+  kind?: string;
+  /** Interaction date — required; must be a deterministic ISO date (YYYY-MM-DD). */
+  date?: string;
+  /** Medium/channel — required (NOT NULL column). */
+  channel?: string;
+  /** What happened — required (NOT NULL column). */
+  summary?: string;
+  /** Optional person link, by slug; resolved before insert. */
+  person?: string;
+}
+
+/** Flags consumed by `hub list-interactions`. All filters optional; combinable. */
+export interface ListInteractionsValues extends CliValues {
+  /** Optional person filter, by slug. */
+  person?: string;
+  /** Optional kind filter (exact match, free text). */
+  kind?: string;
+  /** Last-N-days window: date >= today − N days (UTC). Positive integer. */
+  days?: string;
+  /** Window start: date >= this ISO date (YYYY-MM-DD). */
+  since?: string;
 }
 
 /**

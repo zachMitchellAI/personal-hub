@@ -1,5 +1,5 @@
 // Shared constants for the hub CLI (DESIGN.md layer 2).
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 
 // Task status values (S4). The DB CHECK `tasks_status_check` backstops this
 // list; the CLI validates first so driver errors never surface to users.
@@ -8,7 +8,7 @@ export const TASK_STATUSES = ['ready', 'in-progress', 'completed'] as const;
 // Help text. A plain constant (not a tagged template function): it is read
 // exactly once per process, and VERSION lives in this same file, so direct
 // interpolation is the zero-indirection shape.
-export const USAGE = `hub v${VERSION} — personal hub CLI (zero dependencies)
+export const USAGE = `hub v${VERSION} — personal hub CLI
 
 Verbs:
   init            Create/upgrade life.db: WAL mode, foreign keys ON, apply pending migrations.
@@ -34,6 +34,13 @@ Verbs:
                   position is assigned automatically (max + 1 per task).
   mark-subtask    Set a subtask's done flag: hub mark-subtask <subtask-id> [--done <0|1>]
                   defaults to done. Sibling subtasks and ordering are untouched.
+  add-interaction Log an interaction: hub add-interaction --kind <k> --date <YYYY-MM-DD>
+                  --channel <c> --summary <s> [--person <slug>]. People-less
+                  interactions are valid — omit --person. kind is free text
+                  (call/email/meeting/interview/message…).
+  list-interactions List interactions newest first (date descending, ties by id).
+                  Filters: --person <slug>, --kind <k>, --days <n> (last N
+                  calendar days), --since <YYYY-MM-DD> (date >= this day).
 
 Flags:
   --db <path>              Database path (default $HUB_DB or ~/hub/life.db)
@@ -80,6 +87,19 @@ add-subtask options:
 
 mark-subtask options:
   --done <0|1>             1 = done (default), 0 = not done
+
+add-interaction options:
+  --kind <value>           Interaction kind (required) — call/email/meeting/interview/message/...
+  --date <value>           Interaction date (required) — ISO calendar date YYYY-MM-DD
+  --channel <value>        Medium it happened on (required) — e.g. discord, phone, in-person
+  --summary <value>        What happened (required) — free text
+  --person <slug>          Optional person link (by slug); omit for people-less interactions
+
+list-interactions options:
+  --person <slug>          Only interactions linked to this person
+  --kind <value>           Only interactions of this kind (exact match)
+  --days <n>               Only interactions within the last N calendar days
+  --since <value>          Only interactions on/after this ISO date (YYYY-MM-DD)
 
 Environment:
   HUB_DB           Default database path

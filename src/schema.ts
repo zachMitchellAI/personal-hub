@@ -80,3 +80,23 @@ export const subtasks = sqliteTable('subtasks', {
   done: integer('done').notNull().default(0),
   position: integer('position').notNull(),
 });
+
+// S5 — interactions: the person history log (stories/epic-schema.md S5).
+// person_id is nullable — people-less interactions are valid per the ticket —
+// and ON DELETE SET NULL: erasing a person must not erase the historical log
+// (same reasoning as tasks; history outlives the link).
+// kind is free text (call/email/meeting/interview/message…) — kinds are data,
+// not schema (DESIGN.md D3), so no CHECK.
+// date is the interaction's calendar date (YYYY-MM-DD), validated at the CLI
+// layer with the same parseIsoDate rule as tasks.due_date.
+// channel and summary are unannotated in the ticket → NOT NULL, CLI-required
+// (same reading as tasks.context; flagged as a judgement call in the S5 report).
+export const interactions = sqliteTable('interactions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  personId: integer('person_id').references(() => people.id, { onDelete: 'set null' }),
+  kind: text('kind').notNull(),
+  date: text('date').notNull(),
+  channel: text('channel').notNull(),
+  summary: text('summary').notNull(),
+  createdAt: text('created_at').notNull(),
+});

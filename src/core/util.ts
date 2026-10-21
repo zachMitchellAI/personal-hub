@@ -65,3 +65,23 @@ export function parseIsoDate(raw: string): string | null {
   // Round-trip rejects overflow dates some parsers normalize silently.
   return new Date(ms).toISOString().slice(0, 10) === raw ? raw : null;
 }
+
+/**
+ * Today's UTC calendar date (YYYY-MM-DD). Date-window verbs (e.g. S5's
+ * last-N-days list filter) anchor here so the same result set is returned no
+ * matter where the CLI runs.
+ * @returns The current date as an ISO calendar string.
+ */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Subtract n calendar days from an ISO date, UTC-anchored.
+ * @param iso - The base date (YYYY-MM-DD).
+ * @param n - Days to subtract.
+ * @returns The resulting ISO calendar date.
+ */
+export function minusDays(iso: string, n: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+}

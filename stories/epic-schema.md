@@ -164,6 +164,24 @@ Given EXPLAIN QUERY PLAN on a person-lookup by slug
 Then it uses the unique index (no full scan)
 ```
 
+## S9 — Shell tab-completion + `hub __complete` (agentic + human ergonomics)
+
+**Task:** a hidden `hub __complete <partial-words…>` verb that emits completion candidates, one per line (the standard convention shells expect), plus thin shell scripts (bash/zsh) that call it. Candidates come from three tiers: (1) static — verbs + per-verb flags from the same registry data the CLI already uses; (2) dynamic values — slugs via `list-people`, task statuses via `TASK_STATUSES`, distinct interaction kinds; (3) agents get the same endpoint free — "what statuses are valid?" is the same call a shell makes on Tab.
+**Acceptance:**
+```gherkin
+Given the __complete verb exists
+When I run `hub __complete ""` then `hub __complete "add-"` then `hub __complete "add-interaction --"`
+Then candidates are one-per-line: all verbs → add-* verbs → that verb's flags
+
+Given `hub add-task --person <TAB>` wired through the shell script
+Then completing offers current person slugs from the live DB
+
+Given an agent calling `hub __complete add-task --status ""`
+Then it receives the same candidate list the shell would (ready/in-progress/completed)
+```
+**Library ruling (owner-open, Sam-recommendation 2026-10-21):** cobra is Go-only — does not fit this Node/TypeScript CLI. yargs would force replacing the hand-rolled parseArgs registry (big refactor, little gain). Recommendation: hand-rolled hidden verb + ~60-line shell scripts, keeping drizzle-orm as the only runtime dependency. If the owner prefers a Node completion lib (e.g. omelette), fetch docs + context7 freshness check first per house rules.
+**Note:** zero schema/migration impact — pure additive CLI surface; slot after S6/S7 whenever convenient.
+
 ---
 
 **Definition of done (whole epic):** `hub init` from nothing produces the full schema at user_version=N; every ticket's scenarios pass via `node --test`; a fresh-machine smoke test (the portability contract) runs green; schema-only SQL snapshot committed locally (git, no remote — per #12).
