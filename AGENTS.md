@@ -20,6 +20,32 @@ architecture and `BUILD-STATE.md` for what exists and why — this file is about
 3. **Check current docs before version-sensitive work** (context7 MCP, ≤3
    query-docs calls per question). Node/SQLite/drizzle behavior drifts.
 
+## Documentation standard
+
+- **Every exported function gets JSDoc.** A reader should understand the
+  contract — parameters, return value, failure behavior — without reading the
+  function body. Use `/** ... */` syntax, not bare `//` blocks.
+- **JSDoc is for contracts; body comments are for the story.** JSDoc explains
+  *what* a function does and *why it exists*; light inline comments explain
+  non-obvious steps inside the body (e.g. why a transaction wraps two writes).
+  Every non-trivial function body gets at least a comment where intent isn't
+  obvious from the code alone.
+- Interfaces and types in `core/types.ts` are part of this: each exported
+  interface gets a doc comment, and non-obvious fields get field-level notes.
+
+## Tooling
+
+- Dev dependencies are tooling-only — they must never be imported by `src/`
+  runtime code (that's the zero-runtime-dep rule; `drizzle-orm` stays the sole
+  runtime import). Current tooling: `typescript` (typecheck), `prettier`
+  (format), `@types/node`, `drizzle-kit` (migrations generation).
+- `npm run typecheck` — strict `tsc --noEmit` (see `tsconfig.json`;
+  `erasableSyntaxOnly` + `allowImportingTsExtensions` + `verbatimModuleSyntax`
+  match the type-stripping runtime exactly).
+- `npm run fmt` / `npm run fmt:check` — prettier over `src/` and `tests/`.
+- Run `npm run typecheck && npm run fmt:check && npm test` before declaring a
+  change done.
+
 ## Layout — where new code goes
 
 ```
@@ -77,5 +103,5 @@ src/
 - Tests run against throwaway DBs (`mkdtempSync`), **never** `~/hub/life.db`
   or anything under `HUB_DB`.
 - Green `npm test` with zero packages installed is the portability check —
-  it doubles as proof the zero-dep constraint holds. Run it before declaring
-  any change done.
+  it doubles as proof the zero-dep constraint holds. Run `npm run typecheck`,
+  `npm run fmt:check`, and `npm test` before declaring any change done.

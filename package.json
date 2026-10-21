@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Personal hub — deterministic CLI over life.db (DESIGN.md layer 2). Zero npm dependencies.",
+  "description": "Personal hub — deterministic CLI over life.db (DESIGN.md layer 2). One runtime dep (drizzle-orm over node:sqlite); dev tooling (typescript, prettier) is never imported by src/.",
   "scripts": {
     "test": "node --test \"tests/**/*.test.ts\"",
-    "hub": "node src/hub.ts"
+    "hub": "node src/hub.ts",
+    "typecheck": "tsc --noEmit",
+    "fmt": "prettier --write src tests",
+    "fmt:check": "prettier --check src tests"
   },
   "engines": {
     "node": ">=24"
@@ -15,6 +18,9 @@
     "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.11"
+    "@types/node": "^24",
+    "drizzle-kit": "^0.31.11",
+    "prettier": "^3.6.0",
+    "typescript": "^6.0.2"
   }
 }

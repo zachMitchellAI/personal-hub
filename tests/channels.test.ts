@@ -100,7 +100,10 @@ test('S3: channels kind="discord" and kind="email" persist with literal kind val
   const lOut = JSON.parse(list.stdout);
   assert.equal(lOut.verb, 'list-channels');
   assert.equal(lOut.count, 2);
-  assert.deepEqual(lOut.channels.map((c: ChannelRow) => c.kind), ['discord', 'email']); // ordered by kind
+  assert.deepEqual(
+    lOut.channels.map((c: ChannelRow) => c.kind),
+    ['discord', 'email'],
+  ); // ordered by kind
 
   const rows = rawChannels(dbPath);
   assert.deepEqual(
@@ -119,7 +122,10 @@ test('S3: open-ended kinds — "mastodon" and "mastodon-different-thing" both pe
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const mastodon = runCli(['add-channel', 'casey-smith', '--kind', 'mastodon', '--value', 'mastodon-handle', '--json'], env);
+  const mastodon = runCli(
+    ['add-channel', 'casey-smith', '--kind', 'mastodon', '--value', 'mastodon-handle', '--json'],
+    env,
+  );
   assert.equal(mastodon.status, 0, mastodon.stderr);
   assert.equal(JSON.parse(mastodon.stdout).kind, 'mastodon');
 
@@ -132,10 +138,7 @@ test('S3: open-ended kinds — "mastodon" and "mastodon-different-thing" both pe
   assert.equal(JSON.parse(weird.stdout).kind, 'mastodon-different-thing');
 
   const rows = rawChannels(dbPath);
-  assert.deepEqual(
-    rows.map((r) => r.kind).sort(),
-    ['mastodon', 'mastodon-different-thing'],
-  );
+  assert.deepEqual(rows.map((r) => r.kind).sort(), ['mastodon', 'mastodon-different-thing']);
 
   // user_version stays at the migrations that exist (2) — no schema change happened.
   const db = new DatabaseSync(dbPath);
@@ -181,9 +184,15 @@ test('S3: set-primary on the second email channel demotes the first — one prim
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const first = runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'first@example.test', '--json'], env);
+  const first = runCli(
+    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'first@example.test', '--json'],
+    env,
+  );
   assert.equal(first.status, 0, first.stderr);
-  const second = runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'second@example.test', '--json'], env);
+  const second = runCli(
+    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'second@example.test', '--json'],
+    env,
+  );
   assert.equal(second.status, 0, second.stderr);
   const firstId = JSON.parse(first.stdout).id as number;
   const secondId = JSON.parse(second.stdout).id as number;
@@ -215,18 +224,27 @@ test('S3: add-channel --primary demotes the existing primary of the same (person
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const email1 = runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'first@example.test', '--primary', '--json'], env);
+  const email1 = runCli(
+    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'first@example.test', '--primary', '--json'],
+    env,
+  );
   assert.equal(email1.status, 0, email1.stderr);
   const email1Id = JSON.parse(email1.stdout).id as number;
   assert.equal(JSON.parse(email1.stdout).primary_flag, 1);
 
   // A different kind gets its own primary — must NOT demote the email one.
-  const discord = runCli(['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'zach-test-0001', '--primary', '--json'], env);
+  const discord = runCli(
+    ['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'zach-test-0001', '--primary', '--json'],
+    env,
+  );
   assert.equal(discord.status, 0, discord.stderr);
   assert.equal(JSON.parse(discord.stdout).primary_flag, 1);
 
   // Adding a second primary email demotes the first email only.
-  const email2 = runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'second@example.test', '--primary', '--json'], env);
+  const email2 = runCli(
+    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'second@example.test', '--primary', '--json'],
+    env,
+  );
   assert.equal(email2.status, 0, email2.stderr);
   const email2Id = JSON.parse(email2.stdout).id as number;
 

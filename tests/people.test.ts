@@ -64,8 +64,7 @@ test('S2: person with slug casey-smith persists with a stable id', (t) => {
   const db = new DatabaseSync(dbPath);
   try {
     const row = db.prepare('SELECT id, slug FROM people WHERE slug = ?').get('casey-smith') as
-      | { id: number; slug: string }
-      | undefined;
+      { id: number; slug: string } | undefined;
     assert.ok(row, 'row must persist');
     assert.equal(row.id, out.id);
   } finally {
@@ -93,7 +92,10 @@ test('S2: duplicate slug insert fails with a UNIQUE constraint error', (t) => {
   try {
     db.exec('PRAGMA foreign_keys = ON');
     assert.throws(
-      () => db.prepare('INSERT INTO people (slug, display_name, created_at) VALUES (?, ?, ?)').run('casey-smith', 'Casey Smith', '2026-01-01'),
+      () =>
+        db
+          .prepare('INSERT INTO people (slug, display_name, created_at) VALUES (?, ?, ?)')
+          .run('casey-smith', 'Casey Smith', '2026-01-01'),
       (err: Error) => /UNIQUE constraint failed/.test(err.message),
     );
   } finally {
@@ -119,18 +121,16 @@ test('S2: person without relationship_type stores NULL', (t) => {
   // Raw check: the column is genuinely NULL in storage.
   const db = new DatabaseSync(dbPath);
   try {
-    const row = db.prepare('SELECT relationship_type FROM people WHERE slug = ?').get('casey-smith') as
-      | { relationship_type: string | null };
+    const row = db.prepare('SELECT relationship_type FROM people WHERE slug = ?').get('casey-smith') as {
+      relationship_type: string | null;
+    };
     assert.equal(row.relationship_type, null);
   } finally {
     db.close();
   }
 
   // And when provided, it stores the literal free-text value (no enum).
-  const add2 = runCli(
-    ['add-person', '--name', 'Ada Lovelace', '--relationship-type', 'professional', '--json'],
-    env,
-  );
+  const add2 = runCli(['add-person', '--name', 'Ada Lovelace', '--relationship-type', 'professional', '--json'], env);
   assert.equal(add2.status, 0, add2.stderr);
   const got2 = JSON.parse(runCli(['get-person', 'ada-lovelace', '--json'], env).stdout);
   assert.equal(got2.relationship_type, 'professional');
@@ -170,5 +170,8 @@ test('S2: list-people returns rows ordered by slug', (t) => {
   const out = JSON.parse(list.stdout);
   assert.equal(out.verb, 'list-people');
   assert.equal(out.count, 2);
-  assert.deepEqual(out.people.map((p: { slug: string }) => p.slug), ['ada-lovelace', 'casey-smith']);
+  assert.deepEqual(
+    out.people.map((p: { slug: string }) => p.slug),
+    ['ada-lovelace', 'casey-smith'],
+  );
 });

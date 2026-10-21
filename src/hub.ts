@@ -9,17 +9,20 @@
 import { parseArgs } from 'node:util';
 import process from 'node:process';
 import { USAGE } from './core/constants.ts';
-import type { CliValues, VerbHandler } from './core/types.ts';
+import type { VerbHandler } from './core/types.ts';
 import { cmdInit } from './commands/init.ts';
 import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
 import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
 
-// Verb registry — the single source of truth for the verb → handler mapping.
-// Plain object map, not a TS enum: enums are not erasable syntax and crash
-// under Node 24's type stripping.
+/**
+ * Verb registry — the single source of truth for the verb → handler mapping.
+ * Adding a verb means adding a `cmd*` export in `commands/` and one line here.
+ * Plain object map, not a TS enum: enums are not erasable syntax and crash
+ * under Node 24's type stripping.
+ */
 const VERBS: Record<string, VerbHandler> = {
   // init takes scalar flags rather than a positional, so it gets a tiny adapter.
-  'init': (values) => cmdInit(values.db as string | undefined, values.json === true),
+  init: (values) => cmdInit(values.db as string | undefined, values.json === true),
   'add-person': cmdAddPerson,
   'get-person': cmdGetPerson,
   'list-people': cmdListPeople,
@@ -46,6 +49,12 @@ const PARSE_ARGS_OPTIONS = {
   primary: { type: 'boolean', default: false },
 } as const;
 
+/**
+ * Parse argv, dispatch to the registered verb, and return its exit code.
+ * No verb (or --help) prints usage; unknown verbs print usage to stderr.
+ * All other errors propagate to the top-level handler below.
+ * @returns The process exit code for the CLI run.
+ */
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,

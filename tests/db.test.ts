@@ -21,15 +21,15 @@ test('S2 adapter: drizzle typed insert/select round-trip over node:sqlite', asyn
 
   const raw = openHubDb(dbPath); // same connection: pragmas asserted here
   runMigrations(raw, MIGRATIONS); // schema on the throwaway db
-  const d1 = makeDrizzle(raw);
+  const hub = makeDrizzle(raw);
   try {
-    const [inserted] = await d1
+    const [inserted] = await hub
       .insert(people)
       .values({ slug: 'casey-smith', displayName: 'Casey Smith', createdAt: '2026-10-20T00:00:00.000Z' })
       .returning({ id: people.id, slug: people.slug });
     assert.equal(inserted.slug, 'casey-smith');
 
-    const got = await d1.select().from(people).where(eq(people.slug, 'casey-smith')).get();
+    const got = await hub.select().from(people).where(eq(people.slug, 'casey-smith')).get();
     assert.ok(got);
     assert.equal(got.id, inserted.id);
     assert.equal(got.displayName, 'Casey Smith'); // camelCase mapping works
@@ -49,11 +49,12 @@ test('S2 adapter: duplicate slug raises UNIQUE constraint through drizzle', asyn
 
   const raw = new DatabaseSync(join(tmp, 'life.db'));
   runMigrations(raw, MIGRATIONS);
-  const d1 = makeDrizzle(raw);
+  const hub = makeDrizzle(raw);
   try {
-    await d1.insert(people).values({ slug: 'dup', displayName: 'First', createdAt: '2026-10-20T00:00:00.000Z' }).run();
+    await hub.insert(people).values({ slug: 'dup', displayName: 'First', createdAt: '2026-10-20T00:00:00.000Z' }).run();
     await assert.rejects(
-      () => d1.insert(people).values({ slug: 'dup', displayName: 'Second', createdAt: '2026-10-20T00:00:00.000Z' }).run(),
+      () =>
+        hub.insert(people).values({ slug: 'dup', displayName: 'Second', createdAt: '2026-10-20T00:00:00.000Z' }).run(),
       // drizzle wraps driver errors (DrizzleQueryError "Failed query: ...", cause = SqliteError)
       (err: Error) => /UNIQUE constraint failed/.test(String((err as { cause?: Error }).cause?.message ?? err.message)),
     );
