@@ -5,7 +5,7 @@
 // callbacks are synchronous, so awaited drizzle ops run inside the open tx.
 import { makeDrizzle, openDb } from '../core/db.ts';
 import { contactChannels, people } from '../schema.ts';
-import { errorChainText, parseChannelId } from '../core/util.ts';
+import { errorChainText, parseId } from '../core/util.ts';
 import type { HubDb } from '../core/db.ts';
 import type {
   AddChannelStatus,
@@ -195,7 +195,7 @@ export async function cmdListChannels(values: CliValues, slugArg?: string): Prom
  * @returns Process exit code (0 = removed, 1 = usage/unknown id).
  */
 export async function cmdRemoveChannel(values: CliValues, idArg?: string): Promise<number> {
-  const id = parseChannelId(idArg);
+  const id = parseId(idArg);
   if (id === null) {
     console.error('hub remove-channel: channel id argument required');
     return 1;
@@ -230,7 +230,7 @@ export async function cmdRemoveChannel(values: CliValues, idArg?: string): Promi
  * @returns Process exit code (0 = promoted, 1 = usage/unknown id).
  */
 export async function cmdSetPrimary(values: CliValues, idArg?: string): Promise<number> {
-  const id = parseChannelId(idArg);
+  const id = parseId(idArg);
   if (id === null) {
     console.error('hub set-primary: channel id argument required');
     return 1;

@@ -105,3 +105,7 @@ src/
 - Green `npm test` with zero packages installed is the portability check —
   it doubles as proof the zero-dep constraint holds. Run `npm run typecheck`,
   `npm run fmt:check`, and `npm test` before declaring any change done.
+
+## Ticket completion
+
+- When finishing a ticket, avoid performing a commit right away. Commits are preferred to have human review, in case things need further adjustments. After the human reviews and gives the greenlight: commit!
