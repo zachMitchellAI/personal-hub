@@ -144,7 +144,7 @@ test('S3: open-ended kinds — "mastodon" and "mastodon-different-thing" both pe
   const db = new DatabaseSync(dbPath);
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 3);
+    assert.equal(uv.user_version, 4);
   } finally {
     db.close();
   }
