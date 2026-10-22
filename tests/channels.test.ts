@@ -140,11 +140,11 @@ test('S3: open-ended kinds — "mastodon" and "mastodon-different-thing" both pe
   const rows = rawChannels(dbPath);
   assert.deepEqual(rows.map((r) => r.kind).sort(), ['mastodon', 'mastodon-different-thing']);
 
-  // user_version stays at the migrations that exist (5) — no schema change happened.
+  // user_version stays at the migrations that exist (6) — no schema change happened.
   const db = new DatabaseSync(dbPath);
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 5);
+    assert.equal(uv.user_version, 6);
   } finally {
     db.close();
   }

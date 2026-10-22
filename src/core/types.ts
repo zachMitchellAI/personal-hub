@@ -218,6 +218,170 @@ export interface ListTasksStatus {
 }
 
 /**
+ * Entity fields shared by every entity-flavored shape. `EntityJson` is the
+ * full row contract; verb statuses extend it, adding only the `verb` literal.
+ */
+interface EntityFields {
+  id: number;
+  /** Immutable lowercase-dashed slug, derived from the label (or --slug override). */
+  slug: string;
+  /** Free text: concept/project/artifact/… — kinds are data (DESIGN.md D3). */
+  kind: string;
+  /** What the entity is called; the slug is derived from this. */
+  label: string;
+  /** Free-form payload; nullable. */
+  content: string | null;
+  created_at: string;
+}
+
+/** An entity row as emitted by `--json` (snake_case CLI contract). */
+export interface EntityJson extends EntityFields {}
+
+/** `hub add-entity --json` result: the created entity, echoed. */
+export interface AddEntityStatus extends EntityFields {
+  verb: 'add-entity';
+}
+
+/** `hub list-entities --json` result. */
+export interface ListEntitiesStatus {
+  verb: 'list-entities';
+  count: number;
+  /** Echo of --kind, or null when unfiltered. */
+  kind: string | null;
+  entities: EntityJson[];
+}
+
+/**
+ * Entity-link fields shared by every link-flavored shape. `target_label` is
+ * resolved at list/write time from the target table (person display name,
+ * task title, trackable label, interaction summary, file path); null means
+ * the target row no longer exists — entity_links has no DB FK on the
+ * polymorphic target, so dangling links are surfaced, not hidden.
+ */
+interface EntityLinkFields {
+  id: number;
+  entity_id: number;
+  /** person/task/trackable/interaction/file — see ENTITY_LINK_TARGETS. */
+  target_type: string;
+  /** Row id in the target table. */
+  target_id: number;
+  note: string | null;
+  /** Resolved human label of the target; null when the target row is gone. */
+  target_label: string | null;
+}
+
+/** One entity link row as emitted by `--json` (snake_case CLI contract). */
+export interface EntityLinkJson extends EntityLinkFields {}
+
+/** `hub link-entity --json` result: the created link, with its target resolved. */
+export interface LinkEntityStatus extends EntityLinkFields {
+  verb: 'link-entity';
+}
+
+/** `hub list-entity-links --json` result. */
+export interface ListEntityLinksStatus {
+  verb: 'list-entity-links';
+  entity_id: number;
+  /** The entity's slug, echoed for readability. */
+  slug: string;
+  count: number;
+  links: EntityLinkJson[];
+}
+
+/** `hub unlink-entity --json` result. */
+export interface UnlinkEntityStatus {
+  verb: 'unlink-entity';
+  /** Echoed link id. */
+  id: number;
+  /** Always true on success — the verb exits non-zero on any failure. */
+  removed: boolean;
+}
+
+/**
+ * File fields shared by every file-flavored shape. `FileJson` is the full
+ * row contract; verb statuses extend it, adding only the `verb` literal.
+ */
+interface FileFields {
+  id: number;
+  /** Path as given (e.g. ~/hub/files/<slug>/x.pdf) — the CLI never touches disk. */
+  path: string;
+  /** Free text; canonical families: pdf/apk/html/image/project. */
+  kind: string;
+  /** Nullable person link; SET NULL when the person row is deleted. */
+  person_id: number | null;
+  /** Nullable task link; SET NULL when the task row is deleted. */
+  task_id: number | null;
+  added_at: string;
+  note: string | null;
+}
+
+/** A file row as emitted by `--json` (snake_case CLI contract). */
+export interface FileJson extends FileFields {}
+
+/** `hub add-file --json` result: the indexed file, echoed. */
+export interface AddFileStatus extends FileFields {
+  verb: 'add-file';
+}
+
+/** `hub list-files --json` result. */
+export interface ListFilesStatus {
+  verb: 'list-files';
+  count: number;
+  /** Echo of --kind, or null when unfiltered. */
+  kind: string | null;
+  files: FileJson[];
+}
+
+/**
+ * Sync-log entry fields shared by every sync-log-flavored shape. The
+ * idempotency identity is (adapter, direction, entity, entity_id, action) —
+ * enforced by the `sync_log_idempotency` UNIQUE index.
+ */
+interface SyncLogFields {
+  id: number;
+  /** in (external→hub) or out (hub→external). */
+  direction: string;
+  /** Sync engine, e.g. trello-cli. */
+  adapter: string;
+  /** Synced domain — the table name, e.g. "task". */
+  entity: string;
+  /** Row id in that domain. */
+  entity_id: number;
+  /** What the sync did, e.g. move/create/archive. */
+  action: string;
+  /** ISO timestamp of when the action was logged. */
+  ts: string;
+  detail: string | null;
+}
+
+/** A sync_log row as emitted by `--json` (snake_case CLI contract). */
+export interface SyncLogJson extends SyncLogFields {}
+
+/**
+ * `hub log-sync --json` result. Echoes `logged: false` when the entry was an
+ * idempotent no-op — the identity already exists, so the existing row is
+ * returned unchanged instead of adding a new one (exit 0 either way).
+ */
+export interface LogSyncStatus extends SyncLogFields {
+  verb: 'log-sync';
+  /** True when a new row was written; false for an idempotent re-log. */
+  logged: boolean;
+}
+
+/** `hub list-sync-log --json` result. */
+export interface ListSyncLogStatus {
+  verb: 'list-sync-log';
+  count: number;
+  /** Echo of --adapter, or null when unfiltered. */
+  adapter: string | null;
+  /** Echo of --direction, or null when unfiltered. */
+  direction: string | null;
+  /** Echo of --entity, or null when unfiltered. */
+  entity: string | null;
+  entries: SyncLogJson[];
+}
+
+/**
  * Parsed `--flags` from `node:util` parseArgs, shared by every verb.
  * Values arrive unvalidated: handlers must narrow/cast per-verb, which is
  * why verb-specific value interfaces (below) declare what each verb consumes.
@@ -421,6 +585,87 @@ export interface AddTrackableEventValues extends CliValues {
   date?: string;
   /** Free text notes; optional (nullable column). */
   notes?: string;
+}
+
+/** Flags consumed by `hub add-entity`. `kind` and `label` are required at runtime (the handler re-checks). */
+export interface AddEntityValues extends CliValues {
+  /** Entity kind — free text, required (NOT NULL column). */
+  kind?: string;
+  /** Entity label — required; the slug is derived from it unless --slug overrides. */
+  label?: string;
+  /** Free-form content/payload; optional (nullable column). */
+  content?: string;
+  /** Optional slug override; must already be lowercase-dashed or the verb errors. */
+  slug?: string;
+}
+
+/** Flags consumed by `hub list-entities`. */
+export interface ListEntitiesValues extends CliValues {
+  /** Optional kind filter (exact match, free text). */
+  kind?: string;
+}
+
+/** Flags consumed by `hub link-entity`. `target-type` and `target` are required at runtime (the handler re-checks). */
+export interface LinkEntityValues extends CliValues {
+  /** Target table: person/task/trackable/interaction/file — required. */
+  'target-type'?: string;
+  /** Target reference — a person slug or a numeric row id; required. */
+  target?: string;
+  /** Free-form note about the link; optional (nullable column). */
+  note?: string;
+}
+
+/** Flags consumed by `hub unlink-entity` (id comes in as the positional). */
+export interface UnlinkEntityValues extends CliValues {}
+
+/** Flags consumed by `hub add-file`. `path` and `kind` are required at runtime (the handler re-checks). */
+export interface AddFileValues extends CliValues {
+  /** File path — required, stored as given (no disk I/O). */
+  path?: string;
+  /** File kind — required (NOT NULL column); free text. */
+  kind?: string;
+  /** Optional person link, by slug; resolved before insert. */
+  person?: string;
+  /** Optional task link, by numeric id; resolved before insert. */
+  task?: string;
+  /** Free-form note; optional (nullable column). */
+  note?: string;
+}
+
+/** Flags consumed by `hub list-files`. All filters optional; combinable. */
+export interface ListFilesValues extends CliValues {
+  /** Optional person filter, by slug. */
+  person?: string;
+  /** Optional task filter, by numeric id. */
+  task?: string;
+  /** Optional kind filter (exact match, free text). */
+  kind?: string;
+}
+
+/** Flags consumed by `hub log-sync`. `entity`, `entity-id`, and `action` are required at runtime (the handler re-checks). */
+export interface LogSyncValues extends CliValues {
+  /** Synced domain (table name) — required. */
+  entity?: string;
+  /** Synced row id — required, numeric. */
+  'entity-id'?: string;
+  /** What the sync did — required, free text. */
+  action?: string;
+  /** in/out; defaults to "out". Validated against SYNC_DIRECTIONS. */
+  direction?: string;
+  /** Sync adapter; defaults to "trello-cli". Free text (adapters are data). */
+  adapter?: string;
+  /** Free-form detail; optional (nullable column). */
+  detail?: string;
+}
+
+/** Flags consumed by `hub list-sync-log`. All filters optional; combinable. */
+export interface ListSyncLogValues extends CliValues {
+  /** Optional adapter filter (exact match). */
+  adapter?: string;
+  /** Optional direction filter — in or out. */
+  direction?: string;
+  /** Optional entity filter (exact match). */
+  entity?: string;
 }
 
 /**

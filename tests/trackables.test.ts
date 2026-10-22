@@ -8,7 +8,7 @@
 //   3. closed → status reflects closure but events remain intact
 //   4. kind "order" with no party → persists (party is nullable)
 // Extra contracts: CLI status validation (DB CHECK backstop), --date
-// validation on events, unknown trackable/event errors, user_version 5.
+// validation on events, unknown trackable/event errors, user_version 6.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -279,8 +279,8 @@ test('S6: trackable delete cascades its events', (t) => {
 });
 
 // Extra contract — the DB CHECK backstops the CLI-side status validation, and
-// fresh-DB init lands at user_version 5 (…+ 005_trackables).
-test('S6: DB CHECK rejects bad status; user_version lands at 5', (t) => {
+// fresh-DB init lands at user_version 6 (…+ 006_entities_files_sync).
+test('S6: DB CHECK rejects bad status; user_version lands at 6', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dbPath = join(tmp, 'life.db');
@@ -293,7 +293,7 @@ test('S6: DB CHECK rejects bad status; user_version lands at 5', (t) => {
   const db = new DatabaseSync(dbPath);
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 5, 'fresh init with real migrations must land at user_version 5');
+    assert.equal(uv.user_version, 6, 'fresh init with real migrations must land at user_version 6');
     assert.throws(
       () =>
         db

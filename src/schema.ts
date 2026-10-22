@@ -2,7 +2,7 @@
 // drizzle-kit generate turns this into plain SQL migrations in src/migrations/,
 // which our own runner (migrations.ts) applies transactionally.
 // Stable drizzle-orm 0.45.4, sqlite-core only — no native drivers.
-import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 // S2 — people with slug identity.
@@ -139,3 +139,91 @@ export const trackableEvents = sqliteTable('trackable_events', {
   eventType: text('event_type').notNull(),
   notes: text('notes'),
 });
+
+// S7 — entities: anything worth indexing that is not already a person/task/
+// interaction — concepts, projects, artifacts, organizations. Slug identity
+// mirrors people (owner confirmed 2026-10-20): UNIQUE NOT NULL, lowercase-
+// dashed, derived in the CLI from the label (same deriveSlug rules, not a
+// DB-side default). kind and label are free text — kinds are data, not schema
+// (DESIGN.md D3). content is the payload; note the ticket gives entities NO
+// status column, so there is deliberately no set-status verb for them.
+// Column-constraint facts verified 2026-10-22 via context7 (sqlite.org docs,
+// checked against the node:sqlite build in Node v24): `slug text NOT NULL`
+// plus a separate UNIQUE index is the emitted form (drizzle's .unique() →
+// CREATE UNIQUE INDEX ...); UNIQUE treats NULLs as distinct, which is moot
+// here because slug is NOT NULL; inline `REFERENCES parent(col) ON DELETE
+// <action>` is valid for the FK columns below.
+export const entities = sqliteTable('entities', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  slug: text('slug').notNull().unique(),
+  kind: text('kind').notNull(),
+  label: text('label').notNull(),
+  content: text('content'),
+  createdAt: text('created_at').notNull(),
+});
+
+// S7 — entity_links: polymorphic edges from an entity to any other hub row.
+// target_type names the TABLE the link points at: person/task/trackable/
+// interaction/file. (The epic's original "application" became "trackable"
+// when S6 generalized applications per DECISIONS #17 — the applications table
+// no longer exists, so linking to it would dangle by construction.)
+// No DB foreign key is possible here: target_id is polymorphic, and SQLite
+// FKs must reference one specific table. Integrity is therefore a write-path
+// rule (AGENTS.md database contract): link-entity resolves the target row
+// before insert, so an invalid target is a friendly CLI error, never a raw
+// driver crash. entity_id itself IS a real FK — links are attributes of
+// their entity (like contact_channels of a person), so CASCADE on delete.
+export const entityLinks = sqliteTable('entity_links', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  entityId: integer('entity_id')
+    .notNull()
+    .references(() => entities.id, { onDelete: 'cascade' }),
+  targetType: text('target_type').notNull(),
+  targetId: integer('target_id').notNull(),
+  note: text('note'),
+});
+
+// S7 — files: the index of durable artifacts on disk. The hierarchy convention
+// (owner epic note) keeps artifacts under ~/hub/files/<slug>/...; the CLI
+// stores the path as given and performs NO disk I/O — the convention is how
+// humans/agents organize files, not a write-path rule. kind names the file
+// family (pdf/apk/html/image/project); it stays free text with no CHECK — the
+// S7 ticket does not request one (unlike tasks.status), and D3 says kinds are
+// data. person_id/task_id are nullable FKs with ON DELETE SET NULL (same
+// reasoning as tasks/interactions): deleting a person or task must not erase
+// the record of a durable artifact that exists independently of them.
+export const files = sqliteTable('files', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  path: text('path').notNull(),
+  kind: text('kind').notNull(),
+  personId: integer('person_id').references(() => people.id, { onDelete: 'set null' }),
+  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'set null' }),
+  addedAt: text('added_at').notNull(),
+  note: text('note'),
+});
+
+// S7 — sync_log: the one-way sync ledger (DECISIONS #13). Every row records
+// one synced action (direction out = hub→Trello for now, adapter trello-cli).
+// The idempotency contract — a re-run of the same sync adds NO rows — is
+// enforced by a composite UNIQUE index over the business identity of a sync
+// action: (adapter, direction, entity, entity_id, action). ts/detail are
+// deliberately OUTSIDE the key: re-runs never add rows and never rewrite
+// history (first log wins). A second log of the same action surfaces as a
+// UNIQUE violation the CLI catches and reports as "already logged" (exit 0).
+export const syncLog = sqliteTable(
+  'sync_log',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    direction: text('direction').notNull(),
+    adapter: text('adapter').notNull(),
+    /** Domain synced (e.g. "task") — the table name, not a row type. */
+    entity: text('entity').notNull(),
+    entityId: integer('entity_id').notNull(),
+    action: text('action').notNull(),
+    ts: text('ts').notNull(),
+    detail: text('detail'),
+  },
+  (table) => [
+    unique('sync_log_idempotency').on(table.adapter, table.direction, table.entity, table.entityId, table.action),
+  ],
+);

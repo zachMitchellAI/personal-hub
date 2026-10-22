@@ -1,5 +1,5 @@
 // Shared constants for the hub CLI (DESIGN.md layer 2).
-export const VERSION = '0.6.0';
+export const VERSION = '0.7.0';
 
 // Task status values (S4). The DB CHECK `tasks_status_check` backstops this
 // list; the CLI validates first so driver errors never surface to users.
@@ -9,6 +9,17 @@ export const TASK_STATUSES = ['ready', 'in-progress', 'completed'] as const;
 // backstops this list; the CLI validates first so driver errors never
 // surface to users.
 export const TRACKABLE_STATUSES = ['active', 'closed'] as const;
+
+// Entity-link target types (S7). entity_links.target_id is polymorphic, so
+// integrity is a write-path rule: the CLI resolves the target row before
+// insert. "application" became "trackable" when S6 generalized applications
+// (DECISIONS #17) — the applications table no longer exists.
+export const ENTITY_LINK_TARGETS = ['person', 'task', 'trackable', 'interaction', 'file'] as const;
+
+// Sync-log directions (S7). Free text in the DB (the S7 ticket requests no
+// CHECK), but the CLI narrows to these two values so a typo'd --direction is
+// a usage error rather than a permanently mislabelled ledger row.
+export const SYNC_DIRECTIONS = ['in', 'out'] as const;
 
 // Help text. A plain constant (not a tagged template function): it is read
 // exactly once per process, and VERSION lives in this same file, so direct
@@ -64,6 +75,39 @@ Verbs:
   list-trackable-events Show one trackable's event trail oldest first
                   (event_date ascending, ties by id): hub
                   list-trackable-events <trackable-id>.
+  add-entity      Add an entity (anything worth indexing that is not already
+                  a person/task/interaction): hub add-entity --kind <k>
+                  --label <l> [--content <c>] [--slug <s>]. Slug is derived
+                  from --label with the same rules as people (or overridden
+                  by --slug, which must be lowercase-dashed). Entities have
+                  no status column — no lifecycle, no set-status verb.
+  list-entities   List entities ordered by slug. Filter: --kind <k>.
+  link-entity     Link an entity to another hub row: hub link-entity <slug>
+                  --target-type <t> --target <ref> [--note <n>]. target-type:
+                  person/task/trackable/interaction/file. --target is a slug
+                  for person, a numeric id for the others. The target is
+                  resolved at write time — invalid targets are usage errors.
+  list-entity-links Show one entity's links, each resolved to its target's
+                  human label: hub list-entity-links <slug>. A null
+                  target_label means the target row no longer exists.
+  unlink-entity   Remove one entity link by id: hub unlink-entity <link-id>.
+  add-file        Index a durable artifact on disk: hub add-file --path <p>
+                  --kind <k> [--person <slug>] [--task <id>] [--note <n>].
+                  The CLI stores the path as given and never touches disk —
+                  keep artifacts under ~/hub/files/<slug>/... (convention).
+                  kind is free text; the canonical families are
+                  pdf/apk/html/image/project.
+  list-files      List indexed files ordered by id. Filters (combinable):
+                  --person <slug>, --task <id>, --kind <k>.
+  log-sync        Record one sync action in the ledger: hub log-sync
+                  --entity <e> --entity-id <id> --action <a> [--direction
+                  <in|out>] [--adapter <a>] [--detail <d>]. direction
+                  defaults to "out", adapter to "trello-cli". Logging the
+                  same (adapter, direction, entity, entity_id, action) again
+                  is idempotent: no new row, exit 0.
+  list-sync-log   List the sync ledger oldest first (ts ascending, ties by
+                  id). Filters (combinable): --adapter <a>, --direction <d>,
+                  --entity <e>.
 
 Flags:
   --db <path>              Database path (default $HUB_DB or ~/hub/life.db)
@@ -143,6 +187,45 @@ add-trackable-event options:
   --type <value>           Event type (required) — free text, e.g. "thank-you note sent"
   --date <value>           Event date — ISO calendar date YYYY-MM-DD (default: today)
   --notes <value>          Free-form notes
+
+add-entity options:
+  --kind <value>           Entity kind (required) — free text, e.g. concept, project, artifact
+  --label <value>          Entity label (required) — the slug is derived from it
+  --content <value>        Free-form content/payload
+  --slug <value>           Override the derived slug (must be lowercase-dashed)
+
+list-entities options:
+  --kind <value>           Only entities of this kind (exact match)
+
+link-entity options:
+  --target-type <value>    person/task/trackable/interaction/file (required)
+  --target <value>         Target reference (required) — person slug, or numeric id otherwise
+  --note <value>           Free-form note about the link
+
+add-file options:
+  --path <value>           File path (required) — stored as given, e.g. ~/hub/files/<slug>/x.pdf
+  --kind <value>           File kind (required) — pdf/apk/html/image/project (free text)
+  --person <slug>          Optional person link (by slug)
+  --task <id>              Optional task link (numeric id)
+  --note <value>           Free-form note
+
+list-files options:
+  --person <slug>          Only files linked to this person
+  --task <id>              Only files linked to this task (numeric id)
+  --kind <value>           Only files of this kind (exact match)
+
+log-sync options:
+  --entity <value>         Synced domain (required) — e.g. task, trackable
+  --entity-id <value>      Synced row id (required, numeric)
+  --action <value>         What the sync did (required) — e.g. move, create
+  --direction <value>      in/out (default out)
+  --adapter <value>        Sync adapter (default trello-cli)
+  --detail <value>         Free-form detail (e.g. target Trello list)
+
+list-sync-log options:
+  --adapter <value>        Only entries from this adapter
+  --direction <value>      Only entries in this direction (in/out)
+  --entity <value>         Only entries for this domain
 
 Environment:
   HUB_DB           Default database path
