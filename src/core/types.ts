@@ -312,6 +312,118 @@ export interface ListInteractionsValues extends CliValues {
 }
 
 /**
+ * Trackable fields shared by every trackable-flavored shape. `TrackableJson`
+ * is the full row contract; verb statuses extend it, adding only the `verb` literal.
+ */
+interface TrackableFields {
+  id: number;
+  /** What it is — free text ("Acme panel", "new laptop", "refill"). */
+  label: string;
+  /** Free text: job-application/order/prescription/signup… — no enum. */
+  kind: string;
+  /** The entity on the other side, e.g. "Acme Corp"; null for personal signups. */
+  party: string | null;
+  /** Where in the process it sits — free text, NOT an enum (stages vary per kind). */
+  stage: string;
+  /** "active" or "closed" — the one DB-CHECKed column (same pattern as tasks.status). */
+  status: string;
+  created_at: string;
+}
+
+/** A trackable row as emitted by `--json` (snake_case CLI contract). */
+export interface TrackableJson extends TrackableFields {}
+
+/** `hub add-trackable --json` result: the created trackable, echoed. */
+export interface AddTrackableStatus extends TrackableFields {
+  verb: 'add-trackable';
+}
+
+/** `hub set-trackable-status --json` result. */
+export interface SetTrackableStatusStatus {
+  verb: 'set-trackable-status';
+  id: number;
+  status: string;
+}
+
+/** `hub list-trackables --json` result. */
+export interface ListTrackablesStatus {
+  verb: 'list-trackables';
+  count: number;
+  /** Echo of --status, or null when unfiltered. */
+  status: string | null;
+  trackables: TrackableJson[];
+}
+
+/**
+ * Trackable-event fields shared by every event-flavored shape.
+ */
+interface TrackableEventFields {
+  id: number;
+  trackable_id: number;
+  /** ISO calendar date (YYYY-MM-DD); CLI-validated. */
+  event_date: string;
+  /** Free text — what happened ("thank-you note sent", "shipped", "refilled"). */
+  event_type: string;
+  notes: string | null;
+}
+
+/** A trackable event row as emitted by `--json`. */
+export interface TrackableEventJson extends TrackableEventFields {}
+
+/** `hub add-trackable-event --json` result. */
+export interface AddTrackableEventStatus extends TrackableEventFields {
+  verb: 'add-trackable-event';
+}
+
+/** `hub list-trackable-events --json` result: one trackable's trail, in order. */
+export interface ListTrackableEventsStatus {
+  verb: 'list-trackable-events';
+  trackable_id: number;
+  count: number;
+  events: TrackableEventJson[];
+}
+
+/** Flags consumed by `hub add-trackable`. `label` and `kind` are required at runtime (the handler re-checks). */
+export interface AddTrackableValues extends CliValues {
+  /** What it is — required (NOT NULL column). */
+  label?: string;
+  /** Process kind — free text, required (NOT NULL column). */
+  kind?: string;
+  /** The entity on the other side; optional (nullable column). */
+  party?: string;
+  /** Where in the process it sits; defaults to "started" at the CLI. */
+  stage?: string;
+  /** "active" (default) or "closed"; validated against TRACKABLE_STATUSES. */
+  status?: string;
+}
+
+/** Flags consumed by `hub list-trackables`. All filters optional; combinable. */
+export interface ListTrackablesValues extends CliValues {
+  /** Optional kind filter (exact match, free text). */
+  kind?: string;
+  /** Optional status filter — "active" or "closed". */
+  status?: string;
+  /** Optional party filter (exact match, free text). */
+  party?: string;
+}
+
+/** Flags consumed by `hub set-trackable-status`. */
+export interface SetTrackableStatusValues extends CliValues {
+  /** "active" or "closed" — required, validated against TRACKABLE_STATUSES. */
+  status?: string;
+}
+
+/** Flags consumed by `hub add-trackable-event`. `--type` is required; `--date` defaults to today. */
+export interface AddTrackableEventValues extends CliValues {
+  /** Event type — free text, required (NOT NULL column). */
+  type?: string;
+  /** ISO date (YYYY-MM-DD); optional — defaults to today (UTC-anchored). */
+  date?: string;
+  /** Free text notes; optional (nullable column). */
+  notes?: string;
+}
+
+/**
  * A verb handler takes parsed flags, an optional positional argument (the
  * second positional: slug or channel id), and returns the process exit code.
  */

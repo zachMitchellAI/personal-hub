@@ -29,6 +29,13 @@
       "when": 1792603813138,
       "tag": "0003_interactions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792609914632,
+      "tag": "0004_trackables",
+      "breakpoints": true
     }
   ]
 }
