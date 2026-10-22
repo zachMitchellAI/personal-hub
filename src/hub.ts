@@ -15,6 +15,15 @@ import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts'
 import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
 import { cmdAddInteraction, cmdListInteractions } from './commands/interactions.ts';
 import {
+  cmdAddEntity,
+  cmdLinkEntity,
+  cmdListEntities,
+  cmdListEntityLinks,
+  cmdUnlinkEntity,
+} from './commands/entities.ts';
+import { cmdAddFile, cmdListFiles } from './commands/files.ts';
+import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
+import {
   cmdAddTrackable,
   cmdAddTrackableEvent,
   cmdListTrackableEvents,
@@ -51,6 +60,17 @@ const VERBS: Record<string, VerbHandler> = {
   'list-trackables': cmdListTrackables,
   'add-trackable-event': cmdAddTrackableEvent,
   'list-trackable-events': cmdListTrackableEvents,
+  // S7 — entities/links/files/sync_log. Entities have no status column, so
+  // no set-status verb exists for them (lifecycle-free by design).
+  'add-entity': cmdAddEntity,
+  'list-entities': cmdListEntities,
+  'link-entity': cmdLinkEntity,
+  'list-entity-links': cmdListEntityLinks,
+  'unlink-entity': cmdUnlinkEntity,
+  'add-file': cmdAddFile,
+  'list-files': cmdListFiles,
+  'log-sync': cmdLogSync,
+  'list-sync-log': cmdListSyncLog,
 };
 
 const PARSE_ARGS_OPTIONS = {
@@ -90,6 +110,21 @@ const PARSE_ARGS_OPTIONS = {
   party: { type: 'string' },
   stage: { type: 'string' },
   type: { type: 'string' },
+  // S7 entity/link flags (kind/label/slug/notes already declared above).
+  content: { type: 'string' },
+  'target-type': { type: 'string' },
+  target: { type: 'string' },
+  note: { type: 'string' },
+  // S7 file flags (kind/person/notes already declared above).
+  path: { type: 'string' },
+  task: { type: 'string' },
+  // S7 sync-log flags.
+  'entity-id': { type: 'string' },
+  entity: { type: 'string' },
+  action: { type: 'string' },
+  detail: { type: 'string' },
+  direction: { type: 'string' },
+  adapter: { type: 'string' },
 } as const;
 
 /**
