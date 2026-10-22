@@ -100,3 +100,42 @@ export const interactions = sqliteTable('interactions', {
   summary: text('summary').notNull(),
   createdAt: text('created_at').notNull(),
 });
+
+// S6 — trackables: any process-with-a-lifecycle as data (stories/epic-schema.md
+// S6, owner-generalized 2026-10-21). Job applications, orders, prescription
+// refills, signups — job hunting is just the first `kind`, never privileged.
+// party is nullable — a personal signup has no company on the other side.
+// stage is free text with NO enum (stages vary per kind — "stages are data");
+// CLI defaults it to "started" when omitted.
+// status is the ONE column with a DB CHECK (active/closed), same pattern as
+// tasks.status: the ticket names the values explicitly.
+// Person/recruiter linking arrives via S7 entity_links — no person_id here.
+export const trackables = sqliteTable(
+  'trackables',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    label: text('label').notNull(),
+    kind: text('kind').notNull(),
+    party: text('party'),
+    stage: text('stage').notNull(),
+    status: text('status').notNull().default('active'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [check('trackables_status_check', sql`${table.status} in ('active', 'closed')`)],
+);
+
+// S6 — trackable_events: the event trail behind each trackable.
+// trackable_id FK → trackables, ON DELETE CASCADE (events are parts of their
+// trackable — closing a trackable never deletes them, but deleting the
+// trackable itself removes its history, matching the S6 contract).
+// event_date is validated at the CLI layer with the same parseIsoDate rule as
+// tasks.due_date; event_type is free text (kinds are data).
+export const trackableEvents = sqliteTable('trackable_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  trackableId: integer('trackable_id')
+    .notNull()
+    .references(() => trackables.id, { onDelete: 'cascade' }),
+  eventDate: text('event_date').notNull(),
+  eventType: text('event_type').notNull(),
+  notes: text('notes'),
+});

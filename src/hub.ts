@@ -14,6 +14,13 @@ import { cmdInit } from './commands/init.ts';
 import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
 import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
 import { cmdAddInteraction, cmdListInteractions } from './commands/interactions.ts';
+import {
+  cmdAddTrackable,
+  cmdAddTrackableEvent,
+  cmdListTrackableEvents,
+  cmdListTrackables,
+  cmdSetTrackableStatus,
+} from './commands/trackables.ts';
 import { cmdAddSubtask, cmdAddTask, cmdListTasks, cmdMarkSubtask, cmdSetTaskStatus } from './commands/tasks.ts';
 
 /**
@@ -39,6 +46,11 @@ const VERBS: Record<string, VerbHandler> = {
   'mark-subtask': cmdMarkSubtask,
   'add-interaction': cmdAddInteraction,
   'list-interactions': cmdListInteractions,
+  'add-trackable': cmdAddTrackable,
+  'set-trackable-status': cmdSetTrackableStatus,
+  'list-trackables': cmdListTrackables,
+  'add-trackable-event': cmdAddTrackableEvent,
+  'list-trackable-events': cmdListTrackableEvents,
 };
 
 const PARSE_ARGS_OPTIONS = {
@@ -74,6 +86,10 @@ const PARSE_ARGS_OPTIONS = {
   summary: { type: 'string' },
   days: { type: 'string' },
   since: { type: 'string' },
+  // S6 trackable flags (label/kind/status/date/notes already declared above).
+  party: { type: 'string' },
+  stage: { type: 'string' },
+  type: { type: 'string' },
 } as const;
 
 /**

@@ -342,9 +342,9 @@ test('S5: person delete SET NULLs interaction.person_id', (t) => {
   assert.equal(rows[0].person_id, null, 'person delete must SET NULL, not delete history');
 });
 
-// Extra contract — fresh-DB init lands at user_version 4 (001 people +
+// Extra contract — fresh-DB init lands at user_version 5 (001 people +
 // 002 channels + 003 tasks + 004 interactions).
-test('S5: fresh init lands at user_version 4', (t) => {
+test('S5: fresh init lands at user_version 5', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dbPath = join(tmp, 'life.db');
@@ -354,7 +354,7 @@ test('S5: fresh init lands at user_version 4', (t) => {
   const db = new DatabaseSync(dbPath);
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 4);
+    assert.equal(uv.user_version, 5);
   } finally {
     db.close();
   }

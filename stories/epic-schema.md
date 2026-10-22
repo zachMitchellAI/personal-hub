@@ -112,24 +112,30 @@ When run
 Then results are ordered by date descending
 ```
 
-## S6 — `applications` + `application_events` (job pipeline as *data*, not a special case)
+## S6 — `trackables` + `trackable_events` (any process-with-a-lifecycle as *data*, not a special case)
 
-**Task:** applications: `id`, `company`, `role`, `stage` (free text, NOT an enum — stages vary by company), `status` (active/closed), `created_at`. application_events: `application_id` FK CASCADE, `event_date`, `event_type` (free text), `notes`.
+**Generalized 2026-10-21 (owner approved):** was `applications`/`application_events` (job-pipeline-shaped). Widened so the same table tracks any process with a lifecycle — job applications, orders, prescription refills, signups — with job-hunting demoted to just the first `kind`, never privileged. Unchanged in spirit: same event-trail mechanics, same "stages are data" ruling.
+
+**Task:** trackables: `id`, `label` (what it is), `kind` (free text: job-application/order/prescription/signup…), `party` (replaces `company` — the entity on the other side, nullable, since e.g. "signed up for the gym" has no company), `stage` (free text, NOT an enum — stages vary per kind), `status` (active/closed), `created_at`. trackable_events: `trackable_id` FK CASCADE, `event_date`, `event_type` (free text), `notes`.
 **Acceptance:**
 ```gherkin
-Given an application "Acme Corp" stage "panel-interview"
-When I add an application_event "thank-you note sent"
-Then the event trail is queryable in order for that application
+Given a trackable "Acme panel" kind "job-application" party "Acme Corp" stage "panel-interview"
+When I add a trackable_event "thank-you note sent"
+Then the event trail is queryable in order for that trackable
 
-Given a company with a custom stage "team-fit-round-2"
+Given a trackable with a custom stage "team-fit-round-2"
 When inserted
 Then it persists — stages are data, not schema
 
-Given an application is closed
+Given a trackable is closed
 When I query it
 Then status reflects closure but events remain intact (no cascade delete of history)
+
+Given a trackable kind "prescription" party NULL stage "awaiting-refill"
+When inserted
+Then it persists — party is nullable, kinds are data, not schema
 ```
-**Note:** job hunting is a *concept* in this system (decision from owner) — this table is the concept's concrete representation, nothing more privileged than contacts or tasks.
+**Note:** job hunting is a *concept* in this system (decision from owner) — this table is the concept's concrete representation, nothing more privileged than contacts or tasks. Migration naming per S3 precedent: drizzle-kit emits `0004_<name>.sql`; rename to `005_trackables.sql` and normalize the journal tag (`0004_trackables`); verify the snapshot chain with a post-rename regenerate → "No schema changes".
 
 ## S7 — `entities` + `entity_links` + `files` + `sync_log`
 
@@ -179,7 +185,7 @@ Then completing offers current person slugs from the live DB
 Given an agent calling `hub __complete add-task --status ""`
 Then it receives the same candidate list the shell would (ready/in-progress/completed)
 ```
-**Library ruling (owner-open, Sam-recommendation 2026-10-21):** cobra is Go-only — does not fit this Node/TypeScript CLI. yargs would force replacing the hand-rolled parseArgs registry (big refactor, little gain). Recommendation: hand-rolled hidden verb + ~60-line shell scripts, keeping drizzle-orm as the only runtime dependency. If the owner prefers a Node completion lib (e.g. omelette), fetch docs + context7 freshness check first per house rules.
+**Library ruling (owner-ruled 2026-10-21):** use **omelette** (Node completion library) as the provider. Cobra is rejected (Go-only, incompatible with this TypeScript CLI); yargs rejected (would force replacing the hand-rolled parseArgs registry). Per house rules: context7 freshness check + docs fetch required before implementation begins.
 **Note:** zero schema/migration impact — pure additive CLI surface; slot after S6/S7 whenever convenient.
 
 ---

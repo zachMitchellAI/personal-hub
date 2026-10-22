@@ -393,9 +393,9 @@ test('S4: person delete SET NULLs task.person_id; task delete cascades subtasks'
 });
 
 // Extra S4-scope contract: the DB CHECK backstops the CLI, and fresh-DB init
-// lands at user_version 4 (001_people + 002_channels + 003_tasks
+// lands at user_version 5 (001_people + 002_channels + 003_tasks
 // + 004_interactions).
-test('S4: DB CHECK rejects bad status; user_version lands at 4', (t) => {
+test('S4: DB CHECK rejects bad status; user_version lands at 5', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dbPath = join(tmp, 'life.db');
@@ -415,7 +415,7 @@ test('S4: DB CHECK rejects bad status; user_version lands at 4', (t) => {
       /CHECK constraint failed/,
     );
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 4, 'fresh init with real migrations must land at user_version 4');
+    assert.equal(uv.user_version, 5, 'fresh init with real migrations must land at user_version 5');
   } finally {
     db.close();
   }

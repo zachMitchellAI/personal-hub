@@ -1,9 +1,14 @@
 // Shared constants for the hub CLI (DESIGN.md layer 2).
-export const VERSION = '0.5.0';
+export const VERSION = '0.6.0';
 
 // Task status values (S4). The DB CHECK `tasks_status_check` backstops this
 // list; the CLI validates first so driver errors never surface to users.
 export const TASK_STATUSES = ['ready', 'in-progress', 'completed'] as const;
+
+// Trackable status values (S6). The DB CHECK `trackables_status_check`
+// backstops this list; the CLI validates first so driver errors never
+// surface to users.
+export const TRACKABLE_STATUSES = ['active', 'closed'] as const;
 
 // Help text. A plain constant (not a tagged template function): it is read
 // exactly once per process, and VERSION lives in this same file, so direct
@@ -41,6 +46,24 @@ Verbs:
   list-interactions List interactions newest first (date descending, ties by id).
                   Filters: --person <slug>, --kind <k>, --days <n> (last N
                   calendar days), --since <YYYY-MM-DD> (date >= this day).
+  add-trackable   Add a trackable (a process with a lifecycle, e.g. a job
+                  application): hub add-trackable --label <l> --kind <k>
+                  [--party <p>] [--stage <s>] [--status <active|closed>].
+                  stage is free text (stages are data — a custom stage like
+                  "team-fit-round-2" persists without schema change) and
+                  defaults to "started"; status defaults to "active".
+  set-trackable-status Update a trackable's status: hub set-trackable-status <id>
+                  --status <active|closed>. Closure never touches events —
+                  the event trail remains intact.
+  list-trackables List trackables ordered by id. Filters (combinable):
+                  --kind <k>, --status <active|closed>, --party <p>.
+  add-trackable-event Append an event to a trackable's trail: hub
+                  add-trackable-event <trackable-id> --type <t> [--date <d>]
+                  [--notes <n>]. type is free text; date defaults to today
+                  (UTC-anchored) and must be a deterministic ISO date.
+  list-trackable-events Show one trackable's event trail oldest first
+                  (event_date ascending, ties by id): hub
+                  list-trackable-events <trackable-id>.
 
 Flags:
   --db <path>              Database path (default $HUB_DB or ~/hub/life.db)
@@ -100,6 +123,26 @@ list-interactions options:
   --kind <value>           Only interactions of this kind (exact match)
   --days <n>               Only interactions within the last N calendar days
   --since <value>          Only interactions on/after this ISO date (YYYY-MM-DD)
+
+add-trackable options:
+  --label <value>          Trackable label (required) — e.g. the role title
+  --kind <value>           Trackable kind (required) — free text, e.g. application, referral, lead
+  --party <value>          Other party (e.g. company); omit for a personal signup
+  --stage <value>          Free-text stage (default "started")
+  --status <value>         active/closed (default active)
+
+set-trackable-status options:
+  --status <value>         New status: active/closed (required)
+
+list-trackables options:
+  --kind <value>           Only trackables of this kind (exact match)
+  --status <value>         Only trackables with this status (active/closed)
+  --party <value>          Only trackables with this party (exact match)
+
+add-trackable-event options:
+  --type <value>           Event type (required) — free text, e.g. "thank-you note sent"
+  --date <value>           Event date — ISO calendar date YYYY-MM-DD (default: today)
+  --notes <value>          Free-form notes
 
 Environment:
   HUB_DB           Default database path
