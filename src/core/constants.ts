@@ -1,5 +1,5 @@
 // Shared constants for the hub CLI (DESIGN.md layer 2).
-export const VERSION = '0.8.0';
+export const VERSION = '0.9.0';
 
 // Task status values (S4). The DB CHECK `tasks_status_check` backstops this
 // list; the CLI validates first so driver errors never surface to users.
