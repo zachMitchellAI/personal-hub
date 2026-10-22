@@ -20,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^24",
     "drizzle-kit": "^0.31.11",
+    "omelette": "^0.4.17",
     "prettier": "^3.6.0",
     "typescript": "^6.0.2"
   }

@@ -4,128 +4,16 @@
 // Contract: writes go through here; freeform SQL elsewhere is read-only.
 //
 // This file is the entry point only: arg parsing, verb dispatch, and top-level
-// error handling. Shared plumbing lives in core/ (constants, types, paths,
-// util, db), verbs in commands/, domain model at root (schema.ts, migrations).
+// error handling. The verb/flag registry lives in registry.ts (extracted in
+// S9 so the completion engine can share it), shared plumbing in core/
+// (constants, types, paths, util, db), verbs in commands/, domain model at
+// root (schema.ts, migrations).
 import { parseArgs } from 'node:util';
 import process from 'node:process';
 import { USAGE } from './core/constants.ts';
-import type { VerbHandler } from './core/types.ts';
-import { cmdInit } from './commands/init.ts';
-import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
-import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
-import { cmdAddInteraction, cmdListInteractions } from './commands/interactions.ts';
-import {
-  cmdAddEntity,
-  cmdLinkEntity,
-  cmdListEntities,
-  cmdListEntityLinks,
-  cmdUnlinkEntity,
-} from './commands/entities.ts';
-import { cmdAddFile, cmdListFiles } from './commands/files.ts';
-import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
-import {
-  cmdAddTrackable,
-  cmdAddTrackableEvent,
-  cmdListTrackableEvents,
-  cmdListTrackables,
-  cmdSetTrackableStatus,
-} from './commands/trackables.ts';
-import { cmdAddSubtask, cmdAddTask, cmdListTasks, cmdMarkSubtask, cmdSetTaskStatus } from './commands/tasks.ts';
-
-/**
- * Verb registry — the single source of truth for the verb → handler mapping.
- * Adding a verb means adding a `cmd*` export in `commands/` and one line here.
- * Plain object map, not a TS enum: enums are not erasable syntax and crash
- * under Node 24's type stripping.
- */
-const VERBS: Record<string, VerbHandler> = {
-  // init takes scalar flags rather than a positional, so it gets a tiny adapter.
-  init: (values) => cmdInit(values.db as string | undefined, values.json === true),
-  'add-person': cmdAddPerson,
-  'get-person': cmdGetPerson,
-  'list-people': cmdListPeople,
-  'add-channel': cmdAddChannel,
-  'list-channels': cmdListChannels,
-  'remove-channel': cmdRemoveChannel,
-  'set-primary': cmdSetPrimary,
-  'add-task': cmdAddTask,
-  'set-task-status': cmdSetTaskStatus,
-  'list-tasks': cmdListTasks,
-  'add-subtask': cmdAddSubtask,
-  'mark-subtask': cmdMarkSubtask,
-  'add-interaction': cmdAddInteraction,
-  'list-interactions': cmdListInteractions,
-  'add-trackable': cmdAddTrackable,
-  'set-trackable-status': cmdSetTrackableStatus,
-  'list-trackables': cmdListTrackables,
-  'add-trackable-event': cmdAddTrackableEvent,
-  'list-trackable-events': cmdListTrackableEvents,
-  // S7 — entities/links/files/sync_log. Entities have no status column, so
-  // no set-status verb exists for them (lifecycle-free by design).
-  'add-entity': cmdAddEntity,
-  'list-entities': cmdListEntities,
-  'link-entity': cmdLinkEntity,
-  'list-entity-links': cmdListEntityLinks,
-  'unlink-entity': cmdUnlinkEntity,
-  'add-file': cmdAddFile,
-  'list-files': cmdListFiles,
-  'log-sync': cmdLogSync,
-  'list-sync-log': cmdListSyncLog,
-};
-
-const PARSE_ARGS_OPTIONS = {
-  db: { type: 'string' },
-  json: { type: 'boolean', default: false },
-  help: { type: 'boolean', short: 'h', default: false },
-  name: { type: 'string' },
-  'first-name': { type: 'string' },
-  'last-name': { type: 'string' },
-  'relationship-type': { type: 'string' },
-  employer: { type: 'string' },
-  notes: { type: 'string' },
-  slug: { type: 'string' },
-  kind: { type: 'string' },
-  value: { type: 'string' },
-  source: { type: 'string' },
-  primary: { type: 'boolean', default: false },
-  // S4 task/subtask flags. `done` is a string flag ("0"/"1") so `--done 0`
-  // works the same way as `--done 1` under parseArgs.
-  title: { type: 'string' },
-  context: { type: 'string' },
-  person: { type: 'string' },
-  status: { type: 'string' },
-  'due-date': { type: 'string' },
-  origin: { type: 'string' },
-  label: { type: 'string' },
-  done: { type: 'string' },
-  mirror: { type: 'boolean', default: false },
-  'trello-visible': { type: 'boolean', default: false },
-  // S5 interaction flags (kind already declared for add-channel above).
-  date: { type: 'string' },
-  channel: { type: 'string' },
-  summary: { type: 'string' },
-  days: { type: 'string' },
-  since: { type: 'string' },
-  // S6 trackable flags (label/kind/status/date/notes already declared above).
-  party: { type: 'string' },
-  stage: { type: 'string' },
-  type: { type: 'string' },
-  // S7 entity/link flags (kind/label/slug/notes already declared above).
-  content: { type: 'string' },
-  'target-type': { type: 'string' },
-  target: { type: 'string' },
-  note: { type: 'string' },
-  // S7 file flags (kind/person/notes already declared above).
-  path: { type: 'string' },
-  task: { type: 'string' },
-  // S7 sync-log flags.
-  'entity-id': { type: 'string' },
-  entity: { type: 'string' },
-  action: { type: 'string' },
-  detail: { type: 'string' },
-  direction: { type: 'string' },
-  adapter: { type: 'string' },
-} as const;
+import type { CliValues } from './core/types.ts';
+import { PARSE_ARGS_OPTIONS, VERBS } from './registry.ts';
+import { cmdComplete } from './commands/completion.ts';
 
 /**
  * Parse argv, dispatch to the registered verb, and return its exit code.
@@ -134,16 +22,36 @@ const PARSE_ARGS_OPTIONS = {
  * @returns The process exit code for the CLI run.
  */
 async function main(): Promise<number> {
-  const { values, positionals } = parseArgs({
-    allowPositionals: true,
-    options: PARSE_ARGS_OPTIONS,
-  });
+  let values: CliValues;
+  let positionals: string[];
+  try {
+    // Inline destructure keeps parseArgs' `as const`-narrowed values type
+    // (annotating the result as ReturnType<typeof parseArgs> widens it and
+    // breaks CliValues assignability).
+    const parsed = parseArgs({ allowPositionals: true, options: PARSE_ARGS_OPTIONS });
+    values = parsed.values;
+    positionals = parsed.positionals;
+  } catch (err: unknown) {
+    if (process.argv.slice(2).includes('__complete')) return 0;
+    throw err;
+  }
 
   const verb = positionals[0];
 
   if (values.help || !verb) {
     console.log(USAGE);
     return values.help ? 0 : 1;
+  }
+
+  // Hidden verb — dispatched before the VERBS lookup so it stays out of
+  // help text and verb-name completions. It needs the FULL positional tail
+  // (one word per shell word), not just positionals[1].
+  if (verb === '__complete') {
+    // parseArgs consumes a trailing `--` as the option terminator, but the
+    // shell passes it as the partial word when the user typed `hub add-task
+    // --<TAB>`. Re-append it when the raw argv literally ended with `--`.
+    if (process.argv[process.argv.length - 1] === '--') positionals.push('--');
+    return await cmdComplete(values, positionals.slice(1));
   }
 
   const handler = VERBS[verb];
