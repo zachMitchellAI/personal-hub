@@ -109,3 +109,27 @@ src/
 ## Ticket completion
 
 - When finishing a ticket, avoid performing a commit right away. Commits are preferred to have human review, in case things need further adjustments. After the human reviews and gives the greenlight: commit!
+
+## Worktree workflow (added 2026-10-22, owner-approved experiment)
+
+The main checkout (`~/.openclaw/workspace/personal-hub`, branch `main`) is the **owner's review
+lane** — it stays pinned to committed `main` and must never carry in-progress builder state.
+Builders work in per-stage lanes created with `git worktree add ../hub-lane-N -b stage/N`
+(linked worktrees share history with the main repo; `node_modules` is symlinked from the main
+checkout — tooling is read-only, so both lanes can run gates concurrently).
+
+Rules for builder lanes:
+
+1. **Checkpoint commits on the stage branch are allowed and encouraged** — the branch is
+   quarantined scaffolding, and checkpoints make work crash-safe and reviewable.
+2. **Merging to `main` is the owner gate.** Nothing lands on `main` — via merge, rebase, or
+   any other route — without the owner's explicit approval after reading the branch diff
+   (`git diff main..stage/N` from the main checkout). This supersedes the older
+   "leave uncommitted until reviewed" rule; review moved from uncommitted-tree to branch-diff.
+3. **Same-branch single-checkout:** a `stage/*` branch is checked out in exactly one worktree.
+   That constraint *is* the isolation — don't fight it.
+4. **Lane hygiene:** write scratch/handoff notes inside the lane; untracked files never cross
+   between worktrees. One lane per in-flight stage unless the owner asks for more depth.
+5. **Lifecycle:** `git worktree add` → build + checkpoint → owner reviews diff → owner approves
+   → merge into `main` from the main checkout → `git worktree remove ../hub-lane-N`.
+   A lane whose stage was rejected gets archived the same way, with the branch kept for reference.
