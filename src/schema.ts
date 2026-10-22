@@ -2,8 +2,8 @@
 // drizzle-kit generate turns this into plain SQL migrations in src/migrations/,
 // which our own runner (migrations.ts) applies transactionally.
 // Stable drizzle-orm 0.45.4, sqlite-core only — no native drivers.
-import { check, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
-import { sql } from 'drizzle-orm';
+import { check, index, integer, sqliteTable, sqliteView, text, unique } from 'drizzle-orm/sqlite-core';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 
 // S2 — people with slug identity.
 // slug: UNIQUE, NOT NULL, lowercase-dashed, CLI-derived at creation/import,
@@ -27,16 +27,22 @@ export const people = sqliteTable('people', {
 // person_id FK → people, ON DELETE CASCADE (no orphaned channels).
 // At most one primary per (person, kind) is enforced by the CLI write path
 // (transactional demote-then-set), not by a DB constraint — per the S3 ticket.
-export const contactChannels = sqliteTable('contact_channels', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  personId: integer('person_id')
-    .notNull()
-    .references(() => people.id, { onDelete: 'cascade' }),
-  kind: text('kind').notNull(),
-  value: text('value').notNull(),
-  primaryFlag: integer('primary_flag').notNull().default(0),
-  source: text('source'),
-});
+export const contactChannels = sqliteTable(
+  'contact_channels',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    personId: integer('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    value: text('value').notNull(),
+    primaryFlag: integer('primary_flag').notNull().default(0),
+    source: text('source'),
+  },
+  // S8 — FK index: list-channels and the person_full channels subquery both
+  // resolve channels by person_id on every call.
+  (table) => [index('contact_channels_person_idx').on(table.personId)],
+);
 
 // S4 — tasks: the relational core of the mirror (stories/epic-schema.md S4).
 // person_id is nullable — tasks can be people-less — and ON DELETE SET NULL:
@@ -64,22 +70,35 @@ export const tasks = sqliteTable(
     trelloVisible: integer('trello_visible').notNull().default(0),
     createdAt: text('created_at').notNull(),
   },
-  (table) => [check('tasks_status_check', sql`${table.status} in ('ready', 'in-progress', 'completed')`)],
+  (table) => [
+    check('tasks_status_check', sql`${table.status} in ('ready', 'in-progress', 'completed')`),
+    // S8 — hot-query index for the mirror set: trello_visible=1 is an
+    // equality predicate, status a list — leading equality column first per
+    // SQLite's index-seek order.
+    index('tasks_mirror_idx').on(table.trelloVisible, table.status),
+    // S8 — FK index: --person task listings and person_full joins.
+    index('tasks_person_idx').on(table.personId),
+  ],
 );
 
 // S4 — subtasks: checklist items hanging off a task.
 // task_id FK → tasks, ON DELETE CASCADE (subtasks are parts of their task).
 // position is CLI-assigned (append: max+1 per task) and ordering is by it;
 // no reorder verb in S4 scope — positions are write-once in this ticket.
-export const subtasks = sqliteTable('subtasks', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  taskId: integer('task_id')
-    .notNull()
-    .references(() => tasks.id, { onDelete: 'cascade' }),
-  label: text('label').notNull(),
-  done: integer('done').notNull().default(0),
-  position: integer('position').notNull(),
-});
+export const subtasks = sqliteTable(
+  'subtasks',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    taskId: integer('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    label: text('label').notNull(),
+    done: integer('done').notNull().default(0),
+    position: integer('position').notNull(),
+  },
+  // S8 — FK index: subtasks are nested under their task on every list-tasks call.
+  (table) => [index('subtasks_task_idx').on(table.taskId)],
+);
 
 // S5 — interactions: the person history log (stories/epic-schema.md S5).
 // person_id is nullable — people-less interactions are valid per the ticket —
@@ -91,15 +110,22 @@ export const subtasks = sqliteTable('subtasks', {
 // layer with the same parseIsoDate rule as tasks.due_date.
 // channel and summary are unannotated in the ticket → NOT NULL, CLI-required
 // (same reading as tasks.context; flagged as a judgement call in the S5 report).
-export const interactions = sqliteTable('interactions', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  personId: integer('person_id').references(() => people.id, { onDelete: 'set null' }),
-  kind: text('kind').notNull(),
-  date: text('date').notNull(),
-  channel: text('channel').notNull(),
-  summary: text('summary').notNull(),
-  createdAt: text('created_at').notNull(),
-});
+export const interactions = sqliteTable(
+  'interactions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    personId: integer('person_id').references(() => people.id, { onDelete: 'set null' }),
+    kind: text('kind').notNull(),
+    date: text('date').notNull(),
+    channel: text('channel').notNull(),
+    summary: text('summary').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  // S8 — hot-query index (list-interactions sorts newest-first by date) plus
+  // the person FK index (per-person history and person_full's
+  // recent-interactions subquery).
+  (table) => [index('interactions_date_idx').on(table.date), index('interactions_person_idx').on(table.personId)],
+);
 
 // S6 — trackables: any process-with-a-lifecycle as data (stories/epic-schema.md
 // S6, owner-generalized 2026-10-21). Job applications, orders, prescription
@@ -130,15 +156,20 @@ export const trackables = sqliteTable(
 // trackable itself removes its history, matching the S6 contract).
 // event_date is validated at the CLI layer with the same parseIsoDate rule as
 // tasks.due_date; event_type is free text (kinds are data).
-export const trackableEvents = sqliteTable('trackable_events', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  trackableId: integer('trackable_id')
-    .notNull()
-    .references(() => trackables.id, { onDelete: 'cascade' }),
-  eventDate: text('event_date').notNull(),
-  eventType: text('event_type').notNull(),
-  notes: text('notes'),
-});
+export const trackableEvents = sqliteTable(
+  'trackable_events',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    trackableId: integer('trackable_id')
+      .notNull()
+      .references(() => trackables.id, { onDelete: 'cascade' }),
+    eventDate: text('event_date').notNull(),
+    eventType: text('event_type').notNull(),
+    notes: text('notes'),
+  },
+  // S8 — FK index: the event trail resolves by trackable_id.
+  (table) => [index('trackable_events_trackable_idx').on(table.trackableId)],
+);
 
 // S7 — entities: anything worth indexing that is not already a person/task/
 // interaction — concepts, projects, artifacts, organizations. Slug identity
@@ -173,15 +204,20 @@ export const entities = sqliteTable('entities', {
 // before insert, so an invalid target is a friendly CLI error, never a raw
 // driver crash. entity_id itself IS a real FK — links are attributes of
 // their entity (like contact_channels of a person), so CASCADE on delete.
-export const entityLinks = sqliteTable('entity_links', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  entityId: integer('entity_id')
-    .notNull()
-    .references(() => entities.id, { onDelete: 'cascade' }),
-  targetType: text('target_type').notNull(),
-  targetId: integer('target_id').notNull(),
-  note: text('note'),
-});
+export const entityLinks = sqliteTable(
+  'entity_links',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    entityId: integer('entity_id')
+      .notNull()
+      .references(() => entities.id, { onDelete: 'cascade' }),
+    targetType: text('target_type').notNull(),
+    targetId: integer('target_id').notNull(),
+    note: text('note'),
+  },
+  // S8 — FK index: list-entity-links resolves links by entity_id.
+  (table) => [index('entity_links_entity_idx').on(table.entityId)],
+);
 
 // S7 — files: the index of durable artifacts on disk. The hierarchy convention
 // (owner epic note) keeps artifacts under ~/hub/files/<slug>/...; the CLI
@@ -192,15 +228,86 @@ export const entityLinks = sqliteTable('entity_links', {
 // data. person_id/task_id are nullable FKs with ON DELETE SET NULL (same
 // reasoning as tasks/interactions): deleting a person or task must not erase
 // the record of a durable artifact that exists independently of them.
-export const files = sqliteTable('files', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  path: text('path').notNull(),
-  kind: text('kind').notNull(),
-  personId: integer('person_id').references(() => people.id, { onDelete: 'set null' }),
-  taskId: integer('task_id').references(() => tasks.id, { onDelete: 'set null' }),
-  addedAt: text('added_at').notNull(),
-  note: text('note'),
-});
+export const files = sqliteTable(
+  'files',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    path: text('path').notNull(),
+    kind: text('kind').notNull(),
+    personId: integer('person_id').references(() => people.id, { onDelete: 'set null' }),
+    taskId: integer('task_id').references(() => tasks.id, { onDelete: 'set null' }),
+    addedAt: text('added_at').notNull(),
+    note: text('note'),
+  },
+  // S8 — FK indexes: person/task-filtered file listings.
+  (table) => [index('files_person_idx').on(table.personId), index('files_task_idx').on(table.taskId)],
+);
+
+// S8 — active_tasks: the Trello-mirror set as a read-only DB object
+// (stories/epic-schema.md S8). Exactly the rows `list-tasks --mirror` serves:
+// trello_visible=1 AND status in ('ready','in-progress'), due_date ascending
+// with NULLs last. SQLite honors a view's internal ORDER BY when the outer
+// query supplies none of its own (verified live on node:sqlite 3.53). The
+// mirror definition now lives in exactly one place — this view.
+export const activeTasks = sqliteView('active_tasks').as((qb) =>
+  qb
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.trelloVisible, 1), inArray(tasks.status, ['ready', 'in-progress'])))
+    .orderBy(sql`${tasks.dueDate} asc nulls last`),
+);
+
+// S8 — person_full: one row per person with their channels and recent
+// interactions as JSON aggregates. Declared with the raw-sql sqliteView form
+// (explicit columns + raw definition): correlated scalar subqueries over
+// json_group_array are beyond the query builder, and drizzle-kit 0.31.11
+// emits raw-sql views correctly (verified in a scratch schema before writing
+// this — no runner-contract deviation needed).
+// "Recent" = the 5 most recent interactions per person (date descending,
+// ties by id desc — the same ordering list-interactions serves). The ticket
+// leaves "recent" underspecified; this limit is a judgement call flagged to
+// the owner in the S8 report. Both aggregates coalesce to '[]' over an empty
+// set: json_group_array returns NULL on zero rows, and coalesce makes the
+// column a well-typed JSON array string in every row. Channel arrays keep the
+// list-channels order (kind, then id); the view sorts people by slug, the
+// same order list-people serves.
+export const personFull = sqliteView('person_full', {
+  id: integer('id'),
+  slug: text('slug'),
+  displayName: text('display_name'),
+  firstName: text('first_name'),
+  lastName: text('last_name'),
+  relationshipType: text('relationship_type'),
+  employer: text('employer'),
+  notes: text('notes'),
+  createdAt: text('created_at'),
+  channelsJson: text('channels_json'),
+  recentInteractionsJson: text('recent_interactions_json'),
+}).as(sql`
+  select
+    p.id, p.slug, p.display_name, p.first_name, p.last_name,
+    p.relationship_type, p.employer, p.notes, p.created_at,
+    coalesce((
+      select json_group_array(json_object('id', c.id, 'kind', c.kind, 'value', c.value,
+                                         'primary_flag', c.primary_flag, 'source', c.source))
+      from contact_channels c
+      where c.person_id = p.id
+      order by c.kind, c.id
+    ), '[]') as channels_json,
+    coalesce((
+      select json_group_array(json_object('id', i.id, 'kind', i.kind, 'date', i."date",
+                                          'channel', i.channel, 'summary', i.summary))
+      from (
+        select id, kind, "date", channel, summary
+        from interactions
+        where person_id = p.id
+        order by "date" desc, id desc
+        limit 5
+      ) i
+    ), '[]') as recent_interactions_json
+  from people p
+  order by p.slug
+`);
 
 // S7 — sync_log: the one-way sync ledger (DECISIONS #13). Every row records
 // one synced action (direction out = hub→Trello for now, adapter trello-cli).

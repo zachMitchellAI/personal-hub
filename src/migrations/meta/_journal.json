@@ -43,6 +43,13 @@
       "when": 1792677793465,
       "tag": "0005_entities_files_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792683722796,
+      "tag": "0006_indexes_views",
+      "breakpoints": true
     }
   ]
 }
