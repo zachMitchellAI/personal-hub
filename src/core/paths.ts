@@ -24,3 +24,15 @@ export function resolveDbPath(dbFlag?: string): string {
 export function migrationsPath(): string {
   return process.env.HUB_MIGRATIONS ?? join(import.meta.dirname, '..', 'migrations');
 }
+
+/**
+ * Resolve the durable-files root: `$HUB_FILES` if set, otherwise `~/hub/files`
+ * (DESIGN.md: durable artifacts live on disk under the slug hierarchy, never
+ * base64 in the DB). The path is unresolved — callers resolve it, matching
+ * resolveDbPath's contract. Used by the import-vcf verb to write contact
+ * photos as real image files.
+ * @returns The (unresolved) files root path.
+ */
+export function resolveFilesPath(): string {
+  return process.env.HUB_FILES ?? join(homedir(), 'hub', 'files');
+}

@@ -16,6 +16,7 @@ import {
   cmdUnlinkEntity,
 } from './commands/entities.ts';
 import { cmdAddFile, cmdListFiles } from './commands/files.ts';
+import { cmdImportVcf } from './commands/import-vcf.ts';
 import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
 import {
   cmdAddTrackable,
@@ -65,6 +66,8 @@ export const VERBS: Record<string, VerbHandler> = {
   'unlink-entity': cmdUnlinkEntity,
   'add-file': cmdAddFile,
   'list-files': cmdListFiles,
+  // S8b — permanent re-runnable contact importer (DECISIONS #7).
+  'import-vcf': cmdImportVcf,
   'log-sync': cmdLogSync,
   'list-sync-log': cmdListSyncLog,
 };
@@ -127,6 +130,8 @@ export const PARSE_ARGS_OPTIONS = {
   detail: { type: 'string' },
   direction: { type: 'string' },
   adapter: { type: 'string' },
+  // S8b import flags.
+  'dry-run': { type: 'boolean', default: false },
 } as const;
 
 /**
@@ -179,6 +184,7 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   'unlink-entity': [],
   'add-file': ['path', 'kind', 'person', 'task', 'note'],
   'list-files': ['person', 'task', 'kind'],
+  'import-vcf': ['dry-run'],
   'log-sync': ['entity', 'entity-id', 'action', 'direction', 'adapter', 'detail'],
   'list-sync-log': ['adapter', 'direction', 'entity'],
 };

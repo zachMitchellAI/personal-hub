@@ -227,6 +227,16 @@ list-sync-log options:
   --direction <value>      Only entries in this direction (in/out)
   --entity <value>         Only entries for this domain
 
+import-vcf <file.vcf> [--dry-run]
+  Import contacts from a vCard 2.1 file. FN/N → display_name + derived slug
+  (add-person rules); TEL → phone channels, EMAIL → email channels; ORG →
+  employer; TITLE/ADR/BDAY/URL/NOTE → notes; BASE64 photos are written to
+  ~/hub/files/<slug>/ and indexed in the files table. X-* properties are
+  ignored. Re-runnable: existing slug/phone/email matches are skipped and
+  reported, never duplicated (DECISIONS #7). --dry-run reports what would
+  happen without writing any rows or files.
+
 Environment:
   HUB_DB           Default database path
+  HUB_FILES        Durable files root (default: ~/hub/files)
   HUB_MIGRATIONS   Migrations directory (default: ./migrations beside this file)`;

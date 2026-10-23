@@ -668,6 +668,49 @@ export interface ListSyncLogValues extends CliValues {
   entity?: string;
 }
 
+/** One skipped (or failed) card from `hub import-vcf`, in file order. */
+export interface ImportVcfSkip {
+  /** 0-based index of the card in the source file. */
+  card_index: number;
+  /** Derived slug when one could be derived; null for nameless/failed cards. */
+  slug: string | null;
+  /** Machine-readable reason: duplicate-slug / no-usable-name / error. */
+  reason: string;
+  /** Extra context — e.g. where the duplicate lives, or the error message. */
+  detail?: string;
+}
+
+/**
+ * `hub import-vcf --json` result. Re-runnability contract (DECISIONS #7): a
+ * second run over the same file imports nothing new — every card hits a
+ * slug/phone/email match and lands in `skipped` with counts in the *_skipped
+ * fields, so the summary numbers alone prove idempotence.
+ */
+export interface ImportVcfStatus {
+  verb: 'import-vcf';
+  /** The file path exactly as given on the command line. */
+  file: string;
+  /** True when --dry-run suppressed all writes (DB rows and photo files). */
+  dry_run: boolean;
+  /** Cards found in the file. */
+  cards_total: number;
+  people_imported: number;
+  people_skipped: number;
+  channels_added: number;
+  /** Channels not inserted because the value already exists (any person). */
+  channels_skipped: number;
+  photos_written: number;
+  /** Photos not written because the files-table path already exists. */
+  photos_skipped: number;
+  /** Photo files indexed in the files table. */
+  files_indexed: number;
+  files_skipped: number;
+  /** Cards that failed to import (name derivation, insert, or disk error). */
+  errors: number;
+  /** Skip/error details in file order. */
+  skipped: ImportVcfSkip[];
+}
+
 /**
  * A verb handler takes parsed flags, an optional positional argument (the
  * second positional: slug or channel id), and returns the process exit code.
