@@ -72,6 +72,7 @@ const ALL_VERBS = [
   'unlink-entity',
   'add-file',
   'list-files',
+  'import-vcf',
   'log-sync',
   'list-sync-log',
 ];
