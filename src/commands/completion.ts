@@ -4,19 +4,27 @@
 // asking "what values are valid here?".
 //
 // Three tiers, in the order the ticket defines them:
-//   1. static — verbs, then per-verb flags, from the same VERBS/flags
-//      registry the dispatcher uses (src/registry.ts);
-//   2. dynamic values — person slugs (the list-people query), task/trackable
-//      statuses (TASK_STATUSES / TRACKABLE_STATUSES), distinct interaction
-//      kinds;
+//   1. static — verbs, then per-verb flags, from the DATA-ONLY registry
+//      (core/registry-data.ts) — importing command modules here was paying
+//      ~700ms of drizzle/schema per tab press (perf pass 2026-10-24);
+//   2. dynamic values — person slugs, task/trackable statuses, distinct
+//      interaction kinds;
 //   3. agents get the same endpoint free — "what statuses are valid?" is
 //      literally the same call a shell makes on Tab.
+//
+// The dynamic tier reads the DB with raw read-only SQL over `node:sqlite`
+// (repo contract: freeform SQL is allowed for reads) so the completion path
+// never imports the drizzle adapter — and never runs migrations: a tab press
+// is a read and must not mutate schema state, even idempotently. A missing
+// table therefore offers nothing instead of crashing the shell (covers
+// throwaway/foreign `--db` files).
+//
 // Pure additive CLI surface: no schema or migration impact (user_version
 // stays at 7).
-import { makeDrizzle, openDb } from '../core/db.ts';
-import { interactions, people } from '../schema.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { resolveDbPath } from '../core/paths.ts';
 import { ENTITY_LINK_TARGETS, SYNC_DIRECTIONS, TASK_STATUSES, TRACKABLE_STATUSES } from '../core/constants.ts';
-import { optionType, VERB_FLAGS, VERBS } from '../registry.ts';
+import { optionType, VERB_FLAGS, VERB_NAMES } from '../core/registry-data.ts';
 import type { CliValues } from '../core/types.ts';
 import process from 'node:process';
 
@@ -51,62 +59,70 @@ function printCandidates(candidates: string[]): void {
 }
 
 /**
- * Live person slugs, ordered by slug — exactly the list-people query, run
- * through the same openDb path so a fresh DB is migrated (and therefore
- * queryable) rather than crashing the completion.
- * @param values - Parsed CLI flags (`--db` rides along for live queries).
- * @returns The ordered slug list.
+ * Open the completion DB connection with the S1 pragmas asserted — the same
+ * guarantee openHubDb gives, minus the migrations (completion is read-only;
+ * see the module comment). Direct `new DatabaseSync` here is deliberate and
+ * documented: routing through openDb would import the drizzle adapter.
+ * @param dbPath - Optional `--db` override.
+ * @returns An open pragma-asserted connection (caller closes it).
  */
-async function personSlugs(values: CliValues): Promise<string[]> {
-  const { db } = openDb(values.db as string | undefined);
-  try {
-    const hub = makeDrizzle(db);
-    const rows = await hub.select({ slug: people.slug }).from(people).orderBy(people.slug).all();
-    return rows.map((r) => r.slug);
-  } finally {
-    db.close();
-  }
+function openCompletionDb(dbPath?: string): DatabaseSync {
+  const path = resolveDbPath(dbPath);
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
+  return db;
+}
+
+/**
+ * Live person slugs, ordered by slug — the list-people query, as raw
+ * read-only SQL so the completion path stays drizzle-free.
+ * @param db - An open completion connection.
+ * @returns The ordered slug list (empty if the people table doesn't exist).
+ */
+function personSlugs(db: DatabaseSync): string[] {
+  const hasPeople = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='people'").get() !== undefined;
+  if (!hasPeople) return [];
+  const rows = db.prepare('SELECT slug FROM people ORDER BY slug').all() as { slug: string }[];
+  return rows.map((r) => r.slug);
 }
 
 /**
  * Distinct interaction kinds in the DB, sorted. Kinds are data (DESIGN.md
  * D3), so the live set is the truth — a kind that was never used offers
  * nothing, one that was used once offers itself.
- * @param values - Parsed CLI flags.
+ * @param db - An open completion connection.
  * @returns The sorted distinct kind list.
  */
-async function interactionKinds(values: CliValues): Promise<string[]> {
-  const { db } = openDb(values.db as string | undefined);
-  try {
-    const hub = makeDrizzle(db);
-    const rows = await hub.selectDistinct({ kind: interactions.kind }).from(interactions).all();
-    return rows
-      .map((r) => r.kind)
-      .filter((k) => k.length > 0)
-      .sort();
-  } finally {
-    db.close();
-  }
+function interactionKinds(db: DatabaseSync): string[] {
+  const hasInteractions =
+    db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='interactions'").get() !== undefined;
+  if (!hasInteractions) return [];
+  const rows = db.prepare('SELECT DISTINCT kind FROM interactions').all() as { kind: string }[];
+  return rows
+    .map((r) => r.kind)
+    .filter((k) => k.length > 0)
+    .sort();
 }
 
 /**
  * Candidates for the value of one flag, given the verb it appeared under.
  * Dynamic tiers first (person slugs, statuses, interaction kinds), then the
  * static registry values; anything else offers nothing.
- * @param values - Parsed CLI flags.
+ * @param db - An open completion connection.
  * @param verb - The verb on the command line (disambiguates --status/--kind).
  * @param flag - The flag name, without the leading dashes.
  * @param prefix - The partial value the user has typed so far.
  * @returns The matching candidate values.
  */
-async function flagValueCandidates(values: CliValues, verb: string, flag: string, prefix: string): Promise<string[]> {
+function flagValueCandidates(db: DatabaseSync, verb: string, flag: string, prefix: string): string[] {
   let pool: readonly string[] = [];
   if (flag === 'person') {
-    pool = await personSlugs(values);
+    pool = personSlugs(db);
   } else if (flag === 'status') {
     pool = TRACKABLE_VERBS.has(verb) ? TRACKABLE_STATUSES : TASK_STATUSES;
   } else if (flag === 'kind' && INTERACTION_KIND_VERBS.has(verb)) {
-    pool = await interactionKinds(values);
+    pool = interactionKinds(db);
   } else if (STATIC_VALUES[flag]) {
     pool = STATIC_VALUES[flag] as readonly string[];
   }
@@ -152,9 +168,10 @@ export async function cmdComplete(values: CliValues, rawWords: string[]): Promis
   const toComplete = words.length > 0 ? words[words.length - 1] : '';
   const context = words.length > 1 ? words.slice(0, -1) : [];
 
-  // Tier 1a — verb names (nothing before the word being completed).
+  // Tier 1a — verb names (nothing before the word being completed). Pure
+  // registry data — no DB open at all.
   if (context.length === 0) {
-    printCandidates(Object.keys(VERBS).filter((v) => v.startsWith(toComplete)));
+    printCandidates(VERB_NAMES.filter((v) => v.startsWith(toComplete)));
     return 0;
   }
 
@@ -168,19 +185,26 @@ export async function cmdComplete(values: CliValues, rawWords: string[]): Promis
     return 0;
   }
 
-  // Tier 2/3 — value of the previous word when that word takes a value.
+  // Tier 2/3 — value of the previous word when that word takes a value, or
+  // positional slugs for the slug-taking verbs. Both need the DB; open it
+  // only now (a bare `hub <TAB>` never touches the filesystem).
   const prev = context[context.length - 1];
-  if (prev.startsWith('--')) {
-    const flag = prev.slice(2);
-    if (optionType(flag) === 'string') {
-      printCandidates(await flagValueCandidates(values, verb, flag, toComplete));
-      return 0;
+  const wantsFlagValue = prev.startsWith('--') && optionType(prev.slice(2)) === 'string';
+  const wantsSlugs = !wantsFlagValue && SLUG_POSITIONAL_VERBS.has(verb);
+  if (wantsFlagValue || wantsSlugs) {
+    const db = openCompletionDb(values.db as string | undefined);
+    try {
+      if (wantsFlagValue) {
+        const flag = prev.slice(2);
+        printCandidates(flagValueCandidates(db, verb, flag, toComplete));
+      } else {
+        printCandidates(personSlugs(db).filter((s) => s.startsWith(toComplete)));
+      }
+    } finally {
+      db.close();
     }
+    return 0;
   }
 
-  // Positional completion: slugs for the slug-taking verbs.
-  if (SLUG_POSITIONAL_VERBS.has(verb)) {
-    printCandidates((await personSlugs(values)).filter((s) => s.startsWith(toComplete)));
-  }
   return 0;
 }

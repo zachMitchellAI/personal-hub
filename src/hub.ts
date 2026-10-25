@@ -12,8 +12,31 @@ import { parseArgs } from 'node:util';
 import process from 'node:process';
 import { USAGE } from './core/constants.ts';
 import type { CliValues } from './core/types.ts';
-import { PARSE_ARGS_OPTIONS, VERBS } from './registry.ts';
-import { cmdComplete } from './commands/completion.ts';
+import { PARSE_ARGS_OPTIONS } from './core/registry-data.ts';
+
+/**
+ * Dispatch to the registered verb handler, loading the handler registry on
+ * demand. The heavy `registry.ts` import pulls every command module → db →
+ * schema → drizzle (~700ms of the ~850ms cold start), which `hub __complete`
+ * never needs — it is dispatched below BEFORE this is called, so a tab press
+ * costs ~100ms instead of the full graph (perf pass 2026-10-24).
+ * @param values - Parsed CLI flags.
+ * @param verb - The verb name from positionals[0] (not `__complete`).
+ * @param positionals - Full parsed positionals (handlers may read positionals[1]).
+ * @returns The handler's process exit code.
+ */
+async function dispatchVerb(values: CliValues, verb: string, positionals: string[]): Promise<number> {
+  const { VERBS } = await import('./registry.ts');
+  const handler = VERBS[verb];
+  if (!handler) {
+    console.error(`hub: unknown verb "${verb}"`);
+    console.error(USAGE);
+    return 1;
+  }
+  // Second positional (slug or channel id) rides along; handlers that don't
+  // need it simply ignore it.
+  return await handler(values, positionals[1]);
+}
 
 /**
  * Parse argv, dispatch to the registered verb, and return its exit code.
@@ -45,25 +68,18 @@ async function main(): Promise<number> {
 
   // Hidden verb — dispatched before the VERBS lookup so it stays out of
   // help text and verb-name completions. It needs the FULL positional tail
-  // (one word per shell word), not just positionals[1].
+  // (one word per shell word), not just positionals[1]. Its handler is
+  // imported on demand too: completion never touches the drizzle graph.
   if (verb === '__complete') {
     // parseArgs consumes a trailing `--` as the option terminator, but the
     // shell passes it as the partial word when the user typed `hub add-task
     // --<TAB>`. Re-append it when the raw argv literally ended with `--`.
     if (process.argv[process.argv.length - 1] === '--') positionals.push('--');
+    const { cmdComplete } = await import('./commands/completion.ts');
     return await cmdComplete(values, positionals.slice(1));
   }
 
-  const handler = VERBS[verb];
-  if (!handler) {
-    console.error(`hub: unknown verb "${verb}"`);
-    console.error(USAGE);
-    return 1;
-  }
-
-  // Second positional (slug or channel id) rides along; handlers that don't
-  // need it simply ignore it.
-  return await handler(values, positionals[1]);
+  return await dispatchVerb(values, verb, positionals);
 }
 
 try {
