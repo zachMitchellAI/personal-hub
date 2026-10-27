@@ -24,7 +24,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { resolveDbPath } from '../core/paths.ts';
 import { ENTITY_LINK_TARGETS, SYNC_DIRECTIONS, TASK_STATUSES, TRACKABLE_STATUSES } from '../core/constants.ts';
-import { optionType, VERB_FLAGS, VERB_NAMES } from '../core/registry-data.ts';
+import { REQUIRED_FLAGS, optionType, VERB_FLAGS, VERB_NAMES } from '../core/registry-data.ts';
 import type { CliValues } from '../core/types.ts';
 import process from 'node:process';
 
@@ -141,13 +141,30 @@ function flagValueCandidates(db: DatabaseSync, verb: string, flag: string, prefi
  * the positionals before this handler runs: hub.ts re-appends a trailing
  * `--`, and this handler recovers a partial flag value from the raw argv
  * (second-to-last raw word being a known string flag means that flag's value
- * is what the user is typing).
+ * is what the user is typing). A partially-typed flag NAME (`--ti<TAB>`) makes
+ * parseArgs throw outright — hub.ts re-dispatches the raw argv here with
+ * `parseFailed` (see the @param note) so the flag name still completes.
+ *
+ * Flag names are completed with a requiredness marker: a verb's required
+ * flags (REQUIRED_FLAGS) carry a trailing `*` (e.g. `--title*`) and sort
+ * before the optional ones. The marker is display-only: zsh shows it via
+ * `compadd -d` while inserting the clean name; bash's readline prints
+ * COMPREPLY verbatim in its ambiguous listing, so its wiring keeps the
+ * marker visible there (nosort preserves the required-first ordering) and
+ * strips it exactly when a lone candidate would be inserted whole — bash's
+ * multi-candidate insertion is the longest common prefix, which a trailing
+ * marker can never be part of.
  *
  * @param values - Parsed CLI flags (`--db` rides along for live queries).
  * @param rawWords - Everything after the `__complete` verb itself.
+ * @param parseFailed - Set by hub.ts when parseArgs threw and the raw argv
+ *   was re-dispatched here. The last raw word is then a dash-flag with no
+ *   value after it: a known string flag means the user is completing its
+ *   (empty) value — e.g. `hub add-task --person <TAB>` — while anything else
+ *   dash-prefixed is a partially-typed flag name (`--ti<TAB>` → `--title*`).
  * @returns Process exit code (always 0 — completion never fails the shell).
  */
-export async function cmdComplete(values: CliValues, rawWords: string[]): Promise<number> {
+export async function cmdComplete(values: CliValues, rawWords: string[], parseFailed = false): Promise<number> {
   // The Gherkin-style invocation passes the whole tail as ONE argument
   // ("add-interaction --"); the shell script passes one argument per word.
   // Splitting a lone spaced argument makes both behave identically.
@@ -165,8 +182,22 @@ export async function cmdComplete(values: CliValues, rawWords: string[]): Promis
     }
   }
 
-  const toComplete = words.length > 0 ? words[words.length - 1] : '';
+  let toComplete = words.length > 0 ? words[words.length - 1] : '';
   const context = words.length > 1 ? words.slice(0, -1) : [];
+
+  // parseFailed recovery — see the @param note. A known string flag as the
+  // last word is reframed as completing that flag's value with an empty
+  // prefix, so the generic tier-2 flow below offers the right candidates
+  // (`hub add-task --person <TAB>` → live slugs). A partial/unknown flag
+  // (`--ti<TAB>`) is already correctly framed as tier-1b flag-name
+  // completion; nothing to do.
+  if (parseFailed && words.length >= 2) {
+    const last = words[words.length - 1];
+    if (last.startsWith('--') && last !== '--' && optionType(last.slice(2)) === 'string') {
+      context.push(last);
+      toComplete = '';
+    }
+  }
 
   // Tier 1a — verb names (nothing before the word being completed). Pure
   // registry data — no DB open at all.
@@ -178,10 +209,20 @@ export async function cmdComplete(values: CliValues, rawWords: string[]): Promis
   const verb = context[0];
 
   // Tier 1b — flag names (the word being completed starts with a dash).
+  // Required flags get a trailing `*` marker (REQUIRED_FLAGS) and sort
+  // FIRST, before the optional ones. The marker is display-only: zsh pairs
+  // a marked display list with clean insertion (`compadd -d`); bash prints
+  // COMPREPLY verbatim in its ambiguous listing, so its wiring keeps the
+  // marker visible there (nosort preserves required-first) and strips it
+  // only when a single candidate would be inserted whole; compctl (legacy
+  // zsh) inserts what it displays, so it strips outright. Prefix matching is
+  // done on the marked string — `--ti` matches `--title*`.
   // __complete itself is deliberately never offered: it is a hidden verb.
   if (toComplete.startsWith('-')) {
-    const names = [...(VERB_FLAGS[verb] ?? []), ...GLOBAL_FLAGS].map((f) => `--${f}`);
-    printCandidates(names.filter((f) => f.startsWith(toComplete)));
+    const required = new Set(REQUIRED_FLAGS[verb] ?? []);
+    const marked = [...(VERB_FLAGS[verb] ?? []), ...GLOBAL_FLAGS].map((f) => `--${f}${required.has(f) ? '*' : ''}`);
+    const matching = marked.filter((f) => f.startsWith(toComplete));
+    printCandidates([...matching.filter((f) => f.endsWith('*')), ...matching.filter((f) => !f.endsWith('*'))]);
     return 0;
   }
 

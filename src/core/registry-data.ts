@@ -142,6 +142,34 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
 };
 
 /**
+ * Per-verb REQUIRED flags — the completion-side mirror of the handler
+ * validations (NOT NULL columns enforced CLI-side). `hub __complete` appends
+ * `*` to these flags so a required field is visible on Tab (`--title*`); the
+ * shell scripts strip the marker before insertion (zsh displays it via
+ * `compadd -d`, bash strips it silently). Verbs whose only required argument
+ * is a positional (get-person, list-channels, …) have no entry here —
+ * positional requiredness is not a flag concern. Keep this in sync with the
+ * command handlers: this map is the discoverable face of those checks. A
+ * flag named here but not in VERB_FLAGS is a typecheck error via the same
+ * key-of-Options typing.
+ */
+export const REQUIRED_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTIONS)[]> = {
+  'add-person': ['name'],
+  'add-channel': ['kind', 'value'],
+  'add-task': ['title', 'context'],
+  'set-task-status': ['status'],
+  'add-subtask': ['label'],
+  'add-interaction': ['kind', 'date', 'channel', 'summary'],
+  'add-trackable': ['label', 'kind'],
+  'set-trackable-status': ['status'],
+  'add-trackable-event': ['type'],
+  'add-entity': ['kind', 'label'],
+  'link-entity': ['target-type', 'target'],
+  'add-file': ['path', 'kind'],
+  'log-sync': ['entity', 'entity-id', 'action'],
+};
+
+/**
  * The parse type of one flag — "string" (takes a value) or "boolean" (flag
  * only) — or undefined for an unregistered name. PARSE_ARGS_OPTIONS is an
  * `as const` literal without an index signature, so runtime string lookups

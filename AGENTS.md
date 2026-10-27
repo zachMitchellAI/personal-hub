@@ -110,6 +110,14 @@ src/
 
 - When finishing a ticket, avoid performing a commit right away. Commits are preferred to have human review, in case things need further adjustments. After the human reviews and gives the greenlight: commit!
 
+## Session notes (added 2026-10-25)
+
+- This repo is worked in **OpenCode** coding sessions. Do NOT write OpenClaw memory
+  files (`~/.openclaw/workspace/memory/*.md`, `USER.md`, `MEMORY.md`) unprompted —
+  that memory system is OpenClaw's own and its automations/heartbeat maintain it.
+  Only write there if the owner explicitly asks. In-session notes belong in lane
+  scratch files (see Worktree workflow) or the repo docs themselves.
+
 ## Worktree workflow (added 2026-10-22, owner-approved experiment)
 
 The main checkout (`~/.openclaw/workspace/personal-hub`, branch `main`) is the **owner's review
