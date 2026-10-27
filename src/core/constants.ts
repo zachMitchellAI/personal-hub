@@ -236,6 +236,26 @@ import-vcf <file.vcf> [--dry-run]
   reported, never duplicated (DECISIONS #7). --dry-run reports what would
   happen without writing any rows or files.
 
+edit-person <slug> [flags]
+  Partial update on a person: --name --first-name --last-name
+  --relationship-type --employer --notes. Only provided fields change;
+  slugs are immutable identity — --slug is rejected.
+edit-channel <id> [--kind <k>] [--value <v>]
+  Partial update on a contact channel. primary_flag and source are not
+  editable here (set-primary owns the primary transaction).
+edit-task <id> [flags]
+  Partial update on a task: --title --context --due-date --notes
+  --person <slug>. due-date must be a deterministic ISO date (YYYY-MM-DD);
+  --person resolves by slug and re-points the FK.
+delete-task <id>
+  Hard delete a task. Subtasks cascade.
+delete-entity <slug>
+  Hard delete an entity. Its entity_links rows cascade.
+merge-person <from-slug> --into <into-slug>
+  Consolidate two people rows into one: channels, interactions, files,
+  tasks, and person-targeted links MOVE to the target, then the from-row
+  is deleted — all in one transaction. Refuses from==into and unknown slugs.
+
 Environment:
   HUB_DB           Default database path
   HUB_FILES        Durable files root (default: ~/hub/files)

@@ -718,3 +718,84 @@ export interface ImportVcfStatus {
 // Note: plain object maps, not TS enums — enums are not erasable syntax and
 // crash under Node 24's type stripping.
 export type VerbHandler = (values: CliValues, positional?: string) => number | Promise<number>;
+
+// ─── S12 — CRUD verbs (stories/ticket-s12-crud-verbs.md) ───────────────────
+
+/** Flags consumed by `hub edit-person`. At least one field required at runtime; --slug rejected (identity immutable). */
+export interface EditPersonValues extends CliValues {
+  name?: string;
+  'first-name'?: string;
+  'last-name'?: string;
+  'relationship-type'?: string;
+  employer?: string;
+  notes?: string;
+}
+
+/** Flags consumed by `hub edit-channel`. --kind and/or --value required at runtime. */
+export interface EditChannelValues extends CliValues {
+  kind?: string;
+  value?: string;
+}
+
+/** Flags consumed by `hub edit-task`. At least one task field required at runtime. */
+export interface EditTaskValues extends CliValues {
+  title?: string;
+  context?: string;
+  /** Deterministic ISO date (YYYY-MM-DD) only — same parseIsoDate rule as add-task. */
+  'due-date'?: string;
+  /** Re-points the person FK by slug; resolved before the update. */
+  person?: string;
+  notes?: string;
+}
+
+/** Flags consumed by `hub merge-person`. `into` is required at runtime. */
+export interface MergePersonValues extends CliValues {
+  /** Target person slug (the surviving row); the positional is the from-slug. */
+  into?: string;
+}
+
+/** Per-table moved counts for a completed merge (pre-merge snapshot). */
+export interface MergePersonMoved {
+  channels: number;
+  interactions: number;
+  files: number;
+  tasks: number;
+  /** Polymorphic entity_links rows whose person target was the from-person. */
+  links: number;
+}
+
+/** `hub edit-person --json` result: the full updated row, echoed. */
+export interface EditPersonStatus extends PersonJson {
+  verb: 'edit-person';
+}
+
+/** `hub edit-channel --json` result: the full updated row, echoed. */
+export interface EditChannelStatus extends ChannelJson {
+  verb: 'edit-channel';
+}
+
+/** `hub edit-task --json` result: the full updated row (incl. subtasks), echoed. */
+export interface EditTaskStatus extends TaskJson {
+  verb: 'edit-task';
+}
+
+/** `hub delete-task` / `hub delete-entity` --json result. */
+export interface DeleteStatus {
+  verb: 'delete-task' | 'delete-entity';
+  /** The deleted row's handle: task id (number) or entity slug (string). */
+  deleted: number | string;
+  /** Which domain was deleted (mirror of the verb literal, minus the prefix). */
+  kind: 'task' | 'entity';
+}
+
+/** `hub merge-person --json` result: who merged into whom, and what moved. */
+export interface MergePersonStatus {
+  verb: 'merge-person';
+  /** The from-person slug (the row that no longer exists). */
+  from_slug: string;
+  /** The surviving person slug. */
+  into_slug: string;
+  /** The surviving person's row id (handy for follow-up verbs). */
+  into_id: number;
+  moved: MergePersonMoved;
+}
