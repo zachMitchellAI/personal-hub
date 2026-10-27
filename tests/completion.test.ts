@@ -119,13 +119,15 @@ test('S9: "add-" prefix completes the add-* verbs', (t) => {
 });
 
 // Scenario 3 — completing after a verb offers that verb's flags (plus the
-// global ones), one per line. Both the quoted single-argument Gherkin form
-// and the per-word shell form must work.
+// global ones), one per line. Required flags carry a trailing `*` marker
+// (REQUIRED_FLAGS) — the marker is display-only; the wiring strips it
+// exactly when a lone candidate would be inserted whole. Both the quoted
+// single-argument Gherkin form and the per-word shell form must work.
 test('S9: "add-interaction --" completes that verb flags', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const expected = ['--kind', '--date', '--channel', '--summary', '--person', '--db', '--json', '--help'];
+  const expected = ['--kind*', '--date*', '--channel*', '--summary*', '--person', '--db', '--json', '--help'];
   for (const args of [
     ['__complete', 'add-interaction --'], // quoted form, as written in the ticket
     ['__complete', 'add-interaction', '--'], // per-word form, as the shell sends it
@@ -134,6 +136,37 @@ test('S9: "add-interaction --" completes that verb flags', (t) => {
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(lines(r.stdout), expected);
   }
+});
+
+// Requiredness is verb-dependent: the same flag name is marked under one verb
+// and clean under another. Prefix matching works on the marked string.
+test('S9: required flags are marked with a trailing asterisk', (t) => {
+  const tmp = makeTmp();
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const env = { HUB_DB: join(tmp, 'life.db') };
+  const addTask = runCli(['__complete', 'add-task', '--'], env);
+  assert.equal(addTask.status, 0, addTask.stderr);
+  assert.ok(lines(addTask.stdout).includes('--title*'), 'required --title must be marked');
+  assert.ok(lines(addTask.stdout).includes('--context*'), 'required --context must be marked');
+  assert.ok(lines(addTask.stdout).includes('--status'), 'optional --status must be clean');
+  assert.ok(!lines(addTask.stdout).includes('--status*'), 'optional --status must not be marked');
+
+  const setTask = runCli(['__complete', 'set-task-status', '--'], env);
+  assert.equal(setTask.status, 0, setTask.stderr);
+  assert.ok(lines(setTask.stdout).includes('--status*'), 'set-task-status --status is required');
+
+  // A typed prefix still narrows, marker riding the match.
+  const prefix = runCli(['__complete', 'add-task', '--ti'], env);
+  assert.equal(prefix.status, 0, prefix.stderr);
+  assert.deepEqual(lines(prefix.stdout), ['--title*']);
+
+  // Required-first ordering — bash strips the marker silently, so the
+  // ordering is the visible cue bash users get: required flags before
+  // optional ones (link-entity --target-type* and --target* lead).
+  const linkEntity = runCli(['__complete', 'link-entity', '--'], env);
+  assert.equal(linkEntity.status, 0, linkEntity.stderr);
+  assert.deepEqual(lines(linkEntity.stdout), ['--target-type*', '--target*', '--note', '--db', '--json', '--help']);
 });
 
 // Scenario 4 — --person value completion offers the live slugs, and honors
@@ -223,25 +256,104 @@ test('S9: __complete stays hidden and --db routes live lookups', (t) => {
 
 // Extra — the generated wiring script must exist and parse as bash (the
 // shipped artifact is what shells source; a broken script fails silently).
+// The required-flag marker (`*`) is display-only: zsh displays it via
+// compadd -d while inserting clean names; bash KEEPS it in COMPREPLY
+// (readline prints COMPREPLY verbatim in the ambiguous listing) and strips
+// it exactly when a lone candidate would be inserted whole — captured via
+// mapfile so the `*` survives without pathname expansion; compctl (legacy
+// zsh) inserts what it displays, so it strips outright.
 test('S9: generated completion script exists and is valid bash', () => {
   assert.ok(existsSync(COMPLETION_SH), 'completion/hub-completion.sh missing — run scripts/generate-completion.mjs');
   const check = spawnSync('bash', ['-n', COMPLETION_SH], { encoding: 'utf8' });
   assert.equal(check.status, 0, check.stderr);
   const body = readFileSync(COMPLETION_SH, 'utf8');
   assert.ok(body.includes('hub __complete'), 'script must call the __complete verb');
+  assert.ok(body.includes('compadd -d _hub_cands'), 'zsh must display the marker while inserting clean names');
+  assert.ok(!body.includes('compadd -- `hub __complete'), 'zsh must not insert the raw marked candidates');
+  assert.ok(body.includes('mapfile -t _hub_cands'), 'bash must capture marked candidates without pathname expansion');
+  assert.ok(
+    body.includes('${_hub_cands[0]%\\*}'),
+    'bash must strip the marker exactly when one candidate would be inserted',
+  );
+  assert.ok(body.includes('tr -d "*"'), 'compctl must strip the marker (it inserts what it displays)');
   assert.ok(!body.includes('--compzsh --compgen'), 'script must not require omelette at runtime');
 });
 
-// Extra — a partial flag word with no value yet (the case that makes
-// parseArgs throw "argument missing") fails soft with no candidates.
-test('S9: bare trailing flag word fails soft', (t) => {
+// Extra — the bash wiring contract in action: drive _hub_completion (the
+// function the script registers via `complete -F`) against the real CLI.
+// Multiple candidates keep the marker — readline prints COMPREPLY verbatim
+// in the ambiguous menu, and required-first ordering must survive — while a
+// lone candidate is inserted whole, so its marker must be stripped. Stubs
+// for the bash-completion helpers keep the probe portable to machines
+// without the bash-completion package; `hub()` shadows whatever `hub` is on
+// PATH so the probe uses this checkout's CLI. Flag completion is tier-1
+// static data — no DB is opened, so no throwaway DB is needed here.
+test('S9: bash wiring keeps markers in the menu, strips on insertion', () => {
+  const probe = [
+    `command -v _get_comp_words_by_ref >/dev/null || _get_comp_words_by_ref() { cur=\${COMP_WORDS[COMP_CWORD]}; prev=\${COMP_WORDS[COMP_CWORD-1]}; }`,
+    `command -v __ltrim_colon_completions >/dev/null || __ltrim_colon_completions() { :; }`,
+    `. '${COMPLETION_SH}'`,
+    `hub() { node '${HUB}' "$@"; }`,
+    `COMP_WORDS=(hub add-task --); COMP_CWORD=2; COMP_LINE='hub add-task --'; COMP_POINT=\${#COMP_LINE}`,
+    `_hub_completion`,
+    `echo MULTI`,
+    `printf '%s\\n' "\${COMPREPLY[@]}"`,
+    `COMP_WORDS=(hub add-task --ti); COMP_CWORD=2; COMP_LINE='hub add-task --ti'; COMP_POINT=\${#COMP_LINE}`,
+    `_hub_completion`,
+    `echo SINGLE`,
+    `printf '%s\\n' "\${COMPREPLY[@]}"`,
+  ].join('\n');
+  const r = spawnSync('bash', ['-c', probe], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const multi = lines(r.stdout.split('SINGLE')[0]);
+  const single = lines(r.stdout.split('SINGLE')[1]);
+  assert.deepEqual(multi, [
+    'MULTI',
+    '--title*',
+    '--context*',
+    '--person',
+    '--status',
+    '--due-date',
+    '--origin',
+    '--notes',
+    '--trello-visible',
+    '--db',
+    '--json',
+    '--help',
+  ]);
+  assert.deepEqual(single, ['--title']);
+});
+
+// Extra — a partial flag word that parseArgs cannot parse (`--ti` is not a
+// known flag) used to swallow the word and offer nothing on Tab; the
+// parseFailed recovery in hub.ts re-dispatches the raw argv so the flag
+// completes — with the required marker, no less.
+test('S9: partially-typed flag word completes from the raw argv', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const r = spawnSync(process.execPath, [HUB, '__complete', 'add-task', '--person'], {
-    env: { ...process.env, HUB_DB: join(tmp, 'life.db') },
-    encoding: 'utf8',
-  });
+  const env = { HUB_DB: join(tmp, 'life.db') };
+  const r = runCli(['__complete', 'add-task', '--ti'], env);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, '');
+  assert.deepEqual(lines(r.stdout), ['--title*']);
+});
+
+// Extra — a bare trailing flag word (the case that makes parseArgs throw
+// "argument missing") fails soft: the parseFailed recovery reframes it as
+// completing that flag's value with an empty prefix. An empty throwaway DB
+// offers nothing; a seeded one offers the slugs.
+test('S9: bare trailing flag word fails soft with value candidates', (t) => {
+  const tmp = makeTmp();
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const bare = runCli(['__complete', 'add-task', '--person'], {
+    HUB_DB: join(tmp, 'life.db'),
+  });
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.equal(bare.stdout, '');
+
+  const env = seedDb(join(tmp, 'seeded.db'));
+  const seeded = runCli(['__complete', 'add-task', '--person'], env);
+  assert.equal(seeded.status, 0, seeded.stderr);
+  assert.deepEqual(lines(seeded.stdout), ['casey-smith', 'dana-jones']);
 });

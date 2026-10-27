@@ -55,7 +55,30 @@ async function main(): Promise<number> {
     values = parsed.values;
     positionals = parsed.positionals;
   } catch (err: unknown) {
-    if (process.argv.slice(2).includes('__complete')) return 0;
+    // parseArgs throws on a partially-typed flag word (`hub __complete
+    // add-task --ti` — the flag doesn't exist yet, so "argument missing"-
+    // style errors fire) and the stock catch would offer nothing on Tab.
+    // Re-dispatch with the RAW argv instead: the completion handler knows
+    // how to recover a swallowed flag value, and needs a --db scanned by
+    // hand because parseArgs never produced a values object.
+    if (process.argv.slice(2).includes('__complete')) {
+      const raw = process.argv.slice(2).filter((w) => w !== '__complete');
+      const dbIdx = raw.indexOf('--db');
+      const dbEq = raw.find((w) => w.startsWith('--db='));
+      const db = dbEq !== undefined ? dbEq.slice(5) : dbIdx >= 0 && dbIdx + 1 < raw.length ? raw[dbIdx + 1] : undefined;
+      const drop = new Set<number>();
+      if (dbEq !== undefined) drop.add(raw.indexOf(dbEq));
+      if (db !== undefined && dbIdx >= 0) {
+        drop.add(dbIdx);
+        drop.add(dbIdx + 1);
+      }
+      const { cmdComplete } = await import('./commands/completion.ts');
+      return await cmdComplete(
+        { db } as CliValues,
+        raw.filter((_, i) => !drop.has(i)),
+        true,
+      );
+    }
     throw err;
   }
 
