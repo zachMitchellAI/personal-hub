@@ -11,6 +11,7 @@ import type { StatementSync } from 'node:sqlite';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { runMigrations } from '../migrations.ts';
+import { hasVec0, loadVec0 } from './semantic.ts';
 import { migrationsPath, resolveDbPath } from './paths.ts';
 import * as schema from '../schema.ts';
 
@@ -22,11 +23,15 @@ export type HubDb = ReturnType<typeof makeDrizzle>;
  * through here: `foreign_keys = ON` is per-connection and MUST be re-asserted
  * on every open; `journal_mode = WAL` is persistent but cheap to re-assert.
  * Never call `new DatabaseSync` directly (AGENTS.md database contract).
+ *
+ * Constructed with `allowExtension: true` so S13's vec0 extension can load
+ * (extension loading is only possible at/near construction); loading itself
+ * happens in openDb via loadVec0 and is non-fatal when the .so is absent.
  * @param path - Resolved path to the SQLite database file.
  * @returns An open `DatabaseSync` connection with pragmas set.
  */
 export function openHubDb(path: string): DatabaseSync {
-  const db = new DatabaseSync(path);
+  const db = new DatabaseSync(path, { allowExtension: true });
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   return db;
@@ -36,20 +41,35 @@ export function openHubDb(path: string): DatabaseSync {
  * The shared open path for every verb: resolve the path (flag → $HUB_DB →
  * ~/hub/life.db), create parent directories, assert pragmas via openHubDb,
  * and apply pending migrations idempotently so writes always see the full
- * schema.
+ * schema. The sqlite-vec extension is loaded before migrations when the .so
+ * is present (S13's vec0 virtual tables need it at CREATE time) and its
+ * presence is reported back — a machine without the .so opens fine but skips
+ * the vector migration and degrades to keyword search.
  * @param dbFlag - The `--db` flag value, if provided.
- * @returns The open connection, its resolved path, and the versions applied.
+ * @returns The open connection, its resolved path, the versions applied, and
+ * whether vec0 is usable on this connection.
  */
-export function openDb(dbFlag?: string): { db: DatabaseSync; dbPath: string; applied: number[] } {
+export function openDb(dbFlag?: string): { db: DatabaseSync; dbPath: string; applied: number[]; vec0: boolean } {
   const dbPath = resolve(resolveDbPath(dbFlag));
   // Mkdir before open — SQLite refuses to create parent directories itself.
   mkdirSync(dirname(dbPath), { recursive: true });
 
   const db = openHubDb(dbPath);
 
+  // Load vec0 BEFORE migrations: migration 009's CREATE VIRTUAL TABLE ... vec0
+  // requires the module. Non-fatal when absent (documented portability
+  // caveat) — that connection skips 009 entirely and vector verbs fail
+  // cleanly, so keyword search stays the working fallback.
+  let vec0 = false;
+  try {
+    vec0 = loadVec0(db) ? hasVec0(db) : false;
+  } catch {
+    vec0 = false;
+  }
+
   const dir = migrationsPath();
-  const applied = existsSync(dir) ? runMigrations(db, dir).applied : [];
-  return { db, dbPath, applied };
+  const applied = existsSync(dir) ? runMigrations(db, dir, vec0).applied : [];
+  return { db, dbPath, applied, vec0 };
 }
 
 /**

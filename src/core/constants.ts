@@ -108,6 +108,19 @@ Verbs:
   list-sync-log   List the sync ledger oldest first (ts ascending, ties by
                   id). Filters (combinable): --adapter <a>, --direction <d>,
                   --entity <e>.
+  search          Search interactions by meaning or keyword:
+                  hub search "<query>" [--person <slug>] [--since <d>]
+                  [--k <n>] [--mode auto|hybrid|keyword]. Default auto:
+                  hybrid (embed query locally, rank by cosine via the vec0
+                  index — meaning matches with zero shared keywords) when
+                  vec0 + Ollama are available, keyword (token-overlap)
+                  otherwise. Requires vec0 + Ollama for hybrid; degrades to
+                  keyword automatically.
+  reindex-embeddings Backfill the interaction vector index: hub
+                  reindex-embeddings [--force]. Embeds every interaction
+                  lacking a vector row (all with --force, e.g. after a model
+                  swap). Never deletes interaction rows; repairs gaps left by
+                  an Ollama outage during add-interaction.
 
 Flags:
   --db <path>              Database path (default $HUB_DB or ~/hub/life.db)
@@ -227,6 +240,16 @@ list-sync-log options:
   --direction <value>      Only entries in this direction (in/out)
   --entity <value>         Only entries for this domain
 
+search options:
+  --person <slug>          Only interactions linked to this person
+  --since <value>          Only interactions dated on/after this ISO date
+  --k <value>              Max results (default 5)
+  --mode <value>           auto (default) / hybrid / keyword
+
+reindex-embeddings options:
+  --force                  Re-embed ALL interactions (e.g. after a model swap;
+                           vectors from different models are never mixed)
+
 import-vcf <file.vcf> [--dry-run]
   Import contacts from a vCard 2.1 file. FN/N → display_name + derived slug
   (add-person rules); TEL → phone channels, EMAIL → email channels; ORG →
@@ -239,4 +262,8 @@ import-vcf <file.vcf> [--dry-run]
 Environment:
   HUB_DB           Default database path
   HUB_FILES        Durable files root (default: ~/hub/files)
-  HUB_MIGRATIONS   Migrations directory (default: ./migrations beside this file)`;
+  HUB_MIGRATIONS   Migrations directory (default: ./migrations beside this file)
+  HUB_VEC0_SO      sqlite-vec extension path (default: the OpenClaw install's
+                   bundled vec0.so)
+  HUB_OLLAMA       Ollama base URL (default: http://localhost:11434)
+  HUB_DEBUG        Set to print embedding-failure details on stderr`;

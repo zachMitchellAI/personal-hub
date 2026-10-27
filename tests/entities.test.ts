@@ -443,8 +443,9 @@ test('S7: empty list results are valid', (t) => {
 });
 
 // Fresh-DB init lands at user_version 7 (001_people + 002_channels +
-// 003_tasks + 004_interactions + 005_trackables + 006_entities_files_sync + 007_indexes_views).
-test('S7: fresh init lands at user_version 7', (t) => {
+// 003_tasks + 004_interactions + 005_trackables + 006_entities_files_sync + 007_indexes_views);
+// on vec0-capable machines S13's extension-gated 009 applies too (>= 7).
+test('S7: fresh init lands at user_version 7+', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = { HUB_DB: join(tmp, 'life.db') };
@@ -454,7 +455,7 @@ test('S7: fresh init lands at user_version 7', (t) => {
   const db = new DatabaseSync(join(tmp, 'life.db'));
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 7);
+    assert.ok(uv.user_version >= 7);
     // All four S7 tables exist.
     for (const table of ['entities', 'entity_links', 'files', 'sync_log']) {
       const row = db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(table) as {

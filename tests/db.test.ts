@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { eq } from 'drizzle-orm';
 import { openHubDb, makeDrizzle } from '../src/core/db.ts';
+import { loadVec0 } from '../src/core/semantic.ts';
 import { runMigrations } from '../src/migrations.ts';
 import { people } from '../src/schema.ts';
 
@@ -20,7 +21,10 @@ test('S2 adapter: drizzle typed insert/select round-trip over node:sqlite', asyn
   const dbPath = join(tmp, 'life.db');
 
   const raw = openHubDb(dbPath); // same connection: pragmas asserted here
-  runMigrations(raw, MIGRATIONS); // schema on the throwaway db
+  // openDb's sequence: vec0 loads when the .so exists (extension-gated 009
+  // needs it); absent machines skip it and runMigrations skips 009 too.
+  const vec0 = loadVec0(raw);
+  runMigrations(raw, MIGRATIONS, vec0); // schema on the throwaway db
   const hub = makeDrizzle(raw);
   try {
     const [inserted] = await hub
@@ -47,8 +51,9 @@ test('S2 adapter: duplicate slug raises UNIQUE constraint through drizzle', asyn
   const tmp = mkdtempSync(join(tmpdir(), 'hub-s2-adapter-'));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const raw = new DatabaseSync(join(tmp, 'life.db'));
-  runMigrations(raw, MIGRATIONS);
+  const raw = new DatabaseSync(join(tmp, 'life.db'), { allowExtension: true });
+  const vec0 = loadVec0(raw);
+  runMigrations(raw, MIGRATIONS, vec0);
   const hub = makeDrizzle(raw);
   try {
     await hub.insert(people).values({ slug: 'dup', displayName: 'First', createdAt: '2026-10-20T00:00:00.000Z' }).run();

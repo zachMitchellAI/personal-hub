@@ -59,6 +59,10 @@ export const PARSE_ARGS_OPTIONS = {
   adapter: { type: 'string' },
   // S8b import flags.
   'dry-run': { type: 'boolean', default: false },
+  // S13 semantic-search flags (since already declared for list-interactions).
+  k: { type: 'string' },
+  mode: { type: 'string' },
+  force: { type: 'boolean', default: false },
 } as const;
 
 /** Verb names only — the data-only mirror of the VERBS map's key order. */
@@ -96,6 +100,9 @@ export const VERB_NAMES = [
   'import-vcf',
   'log-sync',
   'list-sync-log',
+  // S13 — semantic search.
+  'search',
+  'reindex-embeddings',
 ] as const;
 
 /**
@@ -139,6 +146,9 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   'import-vcf': ['dry-run'],
   'log-sync': ['entity', 'entity-id', 'action', 'direction', 'adapter', 'detail'],
   'list-sync-log': ['adapter', 'direction', 'entity'],
+  // S13 — semantic search.
+  search: ['person', 'since', 'k', 'mode'],
+  'reindex-embeddings': ['force'],
 };
 
 /**
