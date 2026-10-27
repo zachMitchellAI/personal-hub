@@ -8,6 +8,7 @@
 import { makeDrizzle, openDb } from '../core/db.ts';
 import { interactions, people } from '../schema.ts';
 import { errorChainText, minusDays, parseIsoDate, todayIso } from '../core/util.ts';
+import { embedAfterAdd } from './semantic.ts';
 import type {
   AddInteractionStatus,
   AddInteractionValues,
@@ -89,6 +90,12 @@ export async function cmdAddInteraction(values: AddInteractionValues): Promise<n
         .returning({ id: interactions.id });
       const row = await hub.select().from(interactions).where(eq(interactions.id, inserted[0].id)).get();
       if (!row) throw new Error('insert vanished — returned id not found');
+
+      // S13 write-path hook: best-effort vector insert on the SAME open
+      // connection (vec0 loaded when available). Never throws — an Ollama
+      // outage warns on stderr and leaves the row intact (exit code
+      // unchanged); reindex-embeddings repairs the gap later.
+      await embedAfterAdd(db, row.id, row.summary, row.date, row.personId);
 
       const out: AddInteractionStatus = { verb: 'add-interaction', ...interactionJson(row) };
       if (values.json) {

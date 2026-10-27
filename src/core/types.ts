@@ -382,6 +382,44 @@ export interface ListSyncLogStatus {
 }
 
 /**
+ * One ranked search result as emitted by `hub search --json` (snake_case
+ * contract). `distance` is the ranking metric: hybrid mode reports cosine
+ * distance (lower = closer in meaning, 0 = identical); keyword mode reports
+ * the token-overlap score (higher = more matching keywords).
+ */
+export interface SearchResultJson {
+  interaction_id: number;
+  /** The interaction's person slug, or null for people-less interactions. */
+  person_slug: string | null;
+  date: string;
+  summary: string;
+  distance: number;
+}
+
+/** `hub search --json` result. */
+export interface SearchStatus {
+  verb: 'search';
+  /** The mode actually used: hybrid (vec0 + Ollama), or keyword (fallback). */
+  mode: 'hybrid' | 'keyword';
+  count: number;
+  results: SearchResultJson[];
+}
+
+/** `hub reindex-embeddings --json` result. */
+export interface ReindexEmbeddingsStatus {
+  verb: 'reindex-embeddings';
+  /** Interactions that got a vector row this run. */
+  embedded: number;
+  /** Interactions skipped (already had a vector row; --force re-embeds all). */
+  skipped: number;
+  /** Interactions whose embedding failed (Ollama down) — they stay missing
+   * and a later reindex run repairs them. */
+  failed: number;
+  /** Total interactions examined. */
+  total: number;
+}
+
+/**
  * Parsed `--flags` from `node:util` parseArgs, shared by every verb.
  * Values arrive unvalidated: handlers must narrow/cast per-verb, which is
  * why verb-specific value interfaces (below) declare what each verb consumes.
@@ -666,6 +704,27 @@ export interface ListSyncLogValues extends CliValues {
   direction?: string;
   /** Optional entity filter (exact match). */
   entity?: string;
+}
+
+/** Flags consumed by `hub search`. The query is the positional argument. */
+export interface SearchValues extends CliValues {
+  /** Optional person prefilter, by slug (hybrid: vec0 partition; keyword: SQL WHERE). */
+  person?: string;
+  /** Optional date floor: results with date >= this ISO date (YYYY-MM-DD). */
+  since?: string;
+  /** Max results; default 5. */
+  k?: string;
+  /** hybrid / keyword / auto (default auto: hybrid when vec0+Ollama are up,
+   * keyword otherwise). */
+  mode?: string;
+}
+
+/** Flags consumed by `hub reindex-embeddings`. */
+export interface ReindexEmbeddingsValues extends CliValues {
+  /** Flag: re-embed every interaction, not just the ones missing a vector
+   * (use after an embedding-model swap — vectors from different models are
+   * never mixed). */
+  force?: boolean;
 }
 
 /** One skipped (or failed) card from `hub import-vcf`, in file order. */

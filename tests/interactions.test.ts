@@ -343,8 +343,9 @@ test('S5: person delete SET NULLs interaction.person_id', (t) => {
 });
 
 // Extra contract — fresh-DB init lands at user_version 7 (001 people +
-// 002 channels + 003 tasks + 004 interactions).
-test('S5: fresh init lands at user_version 7', (t) => {
+// 002 channels + 003 tasks + 004 interactions); on vec0-capable machines
+// S13's extension-gated 009 applies too (>= 7).
+test('S5: fresh init lands at user_version 7+', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dbPath = join(tmp, 'life.db');
@@ -354,7 +355,7 @@ test('S5: fresh init lands at user_version 7', (t) => {
   const db = new DatabaseSync(dbPath);
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 7);
+    assert.ok(uv.user_version >= 7);
   } finally {
     db.close();
   }
