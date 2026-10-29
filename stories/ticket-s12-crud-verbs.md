@@ -13,7 +13,11 @@ consolidated, typos in a person/channel/task row are permanent, and stale rows
 with a real duplicated-contact case (details kept out of this repo per PII hygiene, owner directive 2026-10-30): the old row
 interaction still pointing at it.
 
-## Scope — six verbs, one new command module (`src/commands/crud.ts`)
+## Scope — six verbs, distributed into their domain modules
+
+> AMENDED 2026-10-29 (owner review-a-day): originally built as one new
+> `src/commands/crud.ts` module. That layout was a ticket-scoped framing, not
+> domain-scoped. Review verdict + amendment below.
 
 ### Edit verbs (partial updates)
 
@@ -114,3 +118,33 @@ and the from-person still exists — the transaction is the guarantee.
 `npm run typecheck && npm run fmt && npm run fmt:check && npm test` green in the
 lane (baseline 71/71 + new scenarios), checkpoint commit on stage/crud-verbs,
 owner reviews `git diff main..stage/crud-verbs`.
+
+## Review amendment (2026-10-29, owner review-a-day — REFRESH REQUIRED)
+
+The build passed behavioral review (partial-update discipline, merge
+transaction, cascade tests) but the module layout is wrong. Repo convention
+(AGENTS.md: `commands/` = "one module per verb domain") is domain, not
+operation category. `src/commands/crud.ts` is the only module organized by
+operation and has zero residents after distribution — fix before merge:
+
+1. **Distribute the CRUD verbs into their domain modules**, moving the
+   functions verbatim (only imports/exports change):
+   - `edit-person` + `merge-person` + helpers `personSetFromFlags`,
+     `countChildRows`, `countPersonLinks` → `src/commands/people.ts`
+   - `edit-channel` → `src/commands/channels.ts`
+   - `edit-task` + `delete-task` → `src/commands/tasks.ts`
+   - `delete-entity` → `src/commands/entities.ts`
+   - Delete `src/commands/crud.ts` entirely.
+2. **Kill the duplicated `personJsonFor` mapper.** `people.ts` already
+   exports `personJson` with an identical shape; the private copy existed only
+   because edit-person sat outside its domain. After the move, use the domain
+   mapper (and let the duplicate comment go with it).
+3. **No `utils/` additions.** The apparent common code dissolves on
+   inspection: the "nothing to update" usage error and the
+   update-then-reselect-echo pattern are 3-line idioms, not abstractions.
+   Nothing is genuinely shared after distribution.
+4. **Tests stay as-is.** `tests/crud.test.ts` is a behavioral suite (CLI-level
+   against throwaway DBs); file layout changes nothing in it.
+
+Gates: same as above — typecheck, fmt, fmt:check, tests green in the lane;
+checkpoint commit on stage/crud-verbs; no merge, no push.
