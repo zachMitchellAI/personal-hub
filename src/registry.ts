@@ -10,11 +10,18 @@
 // is the data it dispatches with.
 import type { VerbHandler } from './core/types.ts';
 import { cmdInit } from './commands/init.ts';
-import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
-import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
+import { cmdAddPerson, cmdEditPerson, cmdGetPerson, cmdListPeople, cmdMergePerson } from './commands/people.ts';
+import {
+  cmdAddChannel,
+  cmdEditChannel,
+  cmdListChannels,
+  cmdRemoveChannel,
+  cmdSetPrimary,
+} from './commands/channels.ts';
 import { cmdAddInteraction, cmdListInteractions } from './commands/interactions.ts';
 import {
   cmdAddEntity,
+  cmdDeleteEntity,
   cmdLinkEntity,
   cmdListEntities,
   cmdListEntityLinks,
@@ -30,15 +37,15 @@ import {
   cmdListTrackables,
   cmdSetTrackableStatus,
 } from './commands/trackables.ts';
-import { cmdAddSubtask, cmdAddTask, cmdListTasks, cmdMarkSubtask, cmdSetTaskStatus } from './commands/tasks.ts';
 import {
-  cmdDeleteEntity,
+  cmdAddSubtask,
+  cmdAddTask,
   cmdDeleteTask,
-  cmdEditChannel,
-  cmdEditPerson,
   cmdEditTask,
-  cmdMergePerson,
-} from './commands/crud.ts';
+  cmdListTasks,
+  cmdMarkSubtask,
+  cmdSetTaskStatus,
+} from './commands/tasks.ts';
 import { PARSE_ARGS_OPTIONS, VERB_FLAGS, VERB_NAMES, optionType } from './core/registry-data.ts';
 
 export { PARSE_ARGS_OPTIONS, VERB_FLAGS, optionType };
