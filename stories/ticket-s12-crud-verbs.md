@@ -10,8 +10,14 @@ in-progress same day.
 The hub CLI is add-only today: two people rows for the same human cannot be
 consolidated, typos in a person/channel/task row are permanent, and stale rows
 (entities, tasks) can only be ignored, never removed. Pattern hit live 2026-10-27
+<<<<<<< HEAD
 with a real duplicated-contact case (details kept out of this repo per PII hygiene, owner directive 2026-10-30): the old row
 interaction still pointing at it.
+=======
+with a real duplicated-contact case (details kept out of this repo per PII
+hygiene, owner directive 2026-10-30): two rows for the same human; the old row
+was an empty husk with one interaction still pointing at it.
+>>>>>>> e7213e6 ( stories: scrub last real-PII reference from S12 ticket (PII hygiene))
 
 ## Scope — six verbs, distributed into their domain modules
 
