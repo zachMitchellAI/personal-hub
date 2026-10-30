@@ -413,8 +413,6 @@ export async function cmdUnlinkEntity(values: UnlinkEntityValues, idArg?: string
   }
 }
 
-// ---- S12 verb distributed from commands/crud.ts (verbatim move).
-
 /**
  * `hub delete-entity`: hard delete an entity. entity_links rows referencing
  * it cascade via the schema FK on entity_id.
@@ -447,18 +445,3 @@ export async function cmdDeleteEntity(values: CliValues, slugArg?: string): Prom
     db.close();
   }
 }
-
-/**
- * `hub merge-person`: consolidate two people rows into one. All child rows
- * MOVE (UPDATE person_id, never delete+recreate) so primary-channel flags and
- * every other column survive by construction; polymorphic entity_links
- * (target_type='person') get an explicit re-point pass; then the from-person
- * row is deleted. Everything happens in ONE transaction — a failure anywhere
- * rolls the whole merge back (proved by the atomicity test).
- *
- * Refusals are checked before the transaction opens: from == into, unknown
- * from-slug, unknown into-slug — all clean usage errors, nothing written.
- * @param values - Parsed CLI flags; `into` (target slug) required.
- * @param slugArg - First positional argument: the from-person's slug (the row that disappears).
- * @returns Process exit code (0 = merged, 1 = usage/refusal).
- */
