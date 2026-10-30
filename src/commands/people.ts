@@ -162,8 +162,6 @@ export async function cmdListPeople(values: CliValues): Promise<number> {
   }
 }
 
-// ---- S12 verbs distributed from commands/crud.ts (verbatim move; edit-person
-
 /**
  * Collect the person fields provided for a partial update into a drizzle
  * `set` object. Only provided flags appear — an absent flag never reaches the
@@ -262,14 +260,16 @@ export async function cmdMergePerson(values: CliValues, slugArg?: string): Promi
   try {
     const hub = makeDrizzle(db);
 
-    // Resolve both rows up front; unknown slugs are usage errors before any
-    // write begins.
-    const from = await hub.select().from(people).where(eq(people.slug, fromSlug)).get();
+    // Resolve both rows up front in parallel (read-only, no ordering deps);
+    // unknown slugs are usage errors before any write begins.
+    const [from, into] = await Promise.all([
+      hub.select().from(people).where(eq(people.slug, fromSlug)).get(),
+      hub.select().from(people).where(eq(people.slug, intoSlug)).get(),
+    ]);
     if (!from) {
       console.error(`hub merge-person: no person with slug "${fromSlug}"`);
       return 1;
     }
-    const into = await hub.select().from(people).where(eq(people.slug, intoSlug)).get();
     if (!into) {
       console.error(`hub merge-person: no person with slug "${intoSlug}"`);
       return 1;
@@ -284,12 +284,19 @@ export async function cmdMergePerson(values: CliValues, slugArg?: string): Promi
     // Count the rows this merge is responsible for BEFORE any write — the
     // moved-counts summary must reflect pre-merge state (counting after the
     // re-points would be ambiguous: into-person may already have children).
+    const [channels, interactions_c, files_c, tasks_c, links] = await Promise.all([
+      countChildRows(hub, contactChannels, from.id),
+      countChildRows(hub, interactions, from.id),
+      countChildRows(hub, files, from.id),
+      countChildRows(hub, tasks, from.id),
+      countPersonLinks(hub, from.id),
+    ]);
     const moved: MergePersonStatus['moved'] = {
-      channels: await countChildRows(hub, contactChannels, from.id),
-      interactions: await countChildRows(hub, interactions, from.id),
-      files: await countChildRows(hub, files, from.id),
-      tasks: await countChildRows(hub, tasks, from.id),
-      links: await countPersonLinks(hub, from.id),
+      channels,
+      interactions: interactions_c,
+      files: files_c,
+      tasks: tasks_c,
+      links,
     };
 
     // The whole merge is one transaction: a failure in any re-point or the

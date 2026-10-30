@@ -411,8 +411,6 @@ export async function cmdMarkSubtask(values: MarkSubtaskValues, idArg?: string):
   }
 }
 
-// ---- S12 verbs distributed from commands/crud.ts (verbatim move).
-
 /**
  * `hub edit-task`: partial update on a task row. `--due-date` passes the same
  * deterministic-ISO rule as add-task (fuzzy dates never parse); `--person`
@@ -544,11 +542,3 @@ export async function cmdDeleteTask(values: CliValues, idArg?: string): Promise<
     db.close();
   }
 }
-
-/**
- * `hub delete-entity`: hard delete an entity. entity_links rows referencing
- * it cascade via the schema FK on entity_id.
- * @param values - Parsed CLI flags.
- * @param slugArg - First positional argument: the entity's slug.
- * @returns Process exit code (0 = deleted, 1 = usage/unknown slug).
- */
