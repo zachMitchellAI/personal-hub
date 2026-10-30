@@ -26,6 +26,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fixturePerson, slugFor } from './helpers.ts';
 
 const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
 
@@ -63,14 +64,17 @@ function rawRows(dbPath: string, sql: string): Record<string, unknown>[] {
   }
 }
 
+const P0 = fixturePerson(0); // fixture pool[0]
+const P1 = fixturePerson(1); // Casey Smith / Sample Holdings
+
 /** Seed one person + one task + one entity with a link, returning its env. */
 function seedBase(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
-  let r = runCli(['add-person', '--name', 'Marla Sample'], env);
+  let r = runCli(['add-person', '--name', P0.name], env);
   assert.equal(r.status, 0, r.stderr);
   r = runCli(['add-task', '--title', 'Seed task', '--context', 'test'], env);
   assert.equal(r.status, 0, r.stderr);
-  r = runCli(['add-entity', '--kind', 'company', '--label', 'Acme Corp'], env);
+  r = runCli(['add-entity', '--kind', 'company', '--label', P0.employer], env);
   assert.equal(r.status, 0, r.stderr);
   return env;
 }
@@ -83,15 +87,15 @@ test('S12: edit-person changes only provided fields (employer-only diff)', (t) =
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  const before = jsonOut(runCli(['get-person', 'marla-sample', '--json'], env));
-  const r = runCli(['edit-person', 'marla-sample', '--employer', 'Acme Corp'], env);
+  const before = jsonOut(runCli(['get-person', P0.slug, '--json'], env));
+  const r = runCli(['edit-person', P0.slug, '--employer', P0.employer], env);
   assert.equal(r.status, 0, r.stderr);
-  const after = jsonOut(runCli(['get-person', 'marla-sample', '--json'], env));
+  const after = jsonOut(runCli(['get-person', P0.slug, '--json'], env));
 
   // Every field except employer is byte-identical; employer changed.
   for (const key of Object.keys(before)) {
     if (key === 'employer') {
-      assert.equal(after[key], 'Acme Corp');
+      assert.equal(after[key], P0.employer);
     } else {
       assert.deepEqual(after[key], before[key], `field ${key} must be untouched`);
     }
@@ -103,11 +107,11 @@ test('S12: edit-person echoes the updated row via --json', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', 'marla-sample', '--notes', 'lead contact', '--json'], env);
+  const r = runCli(['edit-person', P0.slug, '--notes', 'lead contact', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'edit-person');
-  assert.equal(out.slug, 'marla-sample');
+  assert.equal(out.slug, P0.slug);
   assert.equal(out.notes, 'lead contact');
 });
 
@@ -126,12 +130,12 @@ test('S12: edit-person rejects --slug (identity immutable)', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', 'marla-sample', '--slug', 'new-slug'], env);
+  const r = runCli(['edit-person', P0.slug, '--slug', 'new-slug'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /immutable/);
   // Nothing changed.
-  const after = jsonOut(runCli(['get-person', 'marla-sample', '--json'], env));
-  assert.equal(after.slug, 'marla-sample');
+  const after = jsonOut(runCli(['get-person', P0.slug, '--json'], env));
+  assert.equal(after.slug, P0.slug);
 });
 
 test('S12: edit-person with no field flags exits 1 with usage', (t) => {
@@ -139,7 +143,7 @@ test('S12: edit-person with no field flags exits 1 with usage', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', 'marla-sample'], env);
+  const r = runCli(['edit-person', P0.slug], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /nothing to update/);
 });
@@ -153,16 +157,19 @@ test('S12: edit-channel updates kind/value, preserves primary flag', (t) => {
   const env = seedBase(dbPath);
 
   const added = jsonOut(
-    runCli(['add-channel', 'marla-sample', '--kind', 'email', '--value', 'a@x.com', '--primary', '--json'], env),
+    runCli(['add-channel', P0.slug, '--kind', 'email', '--value', 'a@x.com', '--primary', '--json'], env),
   );
   const channelId = added.id;
   // Make sure it is actually primary (add --primary sets it for a fresh kind).
   assert.equal(added.primary_flag, 1);
 
-  const r = runCli(['edit-channel', String(channelId), '--value', 'marla@new.com'], env);
+  const r = runCli(
+    ['edit-channel', String(channelId), '--value', `${P0.name.split(' ')[0].toLowerCase()}@example.test`],
+    env,
+  );
   assert.equal(r.status, 0, r.stderr);
   const row = rawRows(dbPath, 'SELECT * FROM contact_channels WHERE id = ' + Number(channelId))[0];
-  assert.equal(row.value, 'marla@new.com');
+  assert.equal(row.value, `${P0.name.split(' ')[0].toLowerCase()}@example.test`);
   assert.equal(row.kind, 'email'); // untouched
   assert.equal(row.primary_flag, 1); // preserved
 });
@@ -185,12 +192,12 @@ test('S12: edit-task updates due-date and re-points person by slug', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  const r = runCli(['edit-task', '1', '--due-date', '2026-11-17', '--person', 'marla-sample', '--json'], env);
+  const r = runCli(['edit-task', '1', '--due-date', '2026-11-17', '--person', P0.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'edit-task');
   assert.equal(out.due_date, '2026-11-17');
-  // person_id resolved to Marla's row id (1 — the first seeded person).
+  // person_id resolved to P0's row id (1 — the first seeded person).
   assert.equal(out.person_id, 1);
 });
 
@@ -266,15 +273,15 @@ test('S12: delete-entity cascades entity_links', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  const r0 = runCli(['link-entity', 'acme-corp', '--target-type', 'task', '--target', '1'], env);
+  const r0 = runCli(['link-entity', `${slugFor(P0.employer)}`, '--target-type', 'task', '--target', '1'], env);
   assert.equal(r0.status, 0, r0.stderr);
   assert.equal(rawRows(dbPath, 'SELECT * FROM entity_links').length, 1);
 
-  const r = runCli(['delete-entity', 'acme-corp', '--json'], env);
+  const r = runCli(['delete-entity', `${slugFor(P0.employer)}`, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'delete-entity');
-  assert.equal(out.deleted, 'acme-corp');
+  assert.equal(out.deleted, `${slugFor(P0.employer)}`);
   assert.equal(out.kind, 'entity');
   assert.equal(rawRows(dbPath, 'SELECT * FROM entity_links').length, 0);
   assert.equal(rawRows(dbPath, 'SELECT * FROM entities').length, 0);
@@ -293,19 +300,19 @@ test('S12: delete-entity unknown slug exits 1', (t) => {
 // ─── merge-person ───────────────────────────────────────────────────────────
 
 /** Seed two people, each with children, plus a person-targeted entity link.
- * Returns env + the from/into slugs. Marla (from) is the husk-to-be. */
+ * Returns env + the from/into slugs. P0 (from) is the husk-to-be. */
 function seedMergePair(dbPath: string): { env: Record<string, string> } {
   const env = { HUB_DB: dbPath };
   // Person 1: the survivor (into).
-  assert.equal(runCli(['add-person', '--name', 'Marla Sample'], env).status, 0);
+  assert.equal(runCli(['add-person', '--name', P0.name], env).status, 0);
   // Person 2: the duplicate (from).
-  assert.equal(runCli(['add-person', '--name', 'Marla Sample', '--slug', 'marla-sample-2'], env).status, 0);
+  assert.equal(runCli(['add-person', '--name', P0.name, '--slug', `${P0.slug}-2`], env).status, 0);
   // Children on BOTH rows — after the merge everything lives on person 1.
   assert.equal(
-    runCli(['add-channel', 'marla-sample-2', '--kind', 'email', '--value', 'dup@x.com', '--primary'], env).status,
+    runCli(['add-channel', `${P0.slug}-2`, '--kind', 'email', '--value', 'dup@x.com', '--primary'], env).status,
     0,
   );
-  assert.equal(runCli(['add-channel', 'marla-sample', '--kind', 'phone', '--value', '555-0100'], env).status, 0);
+  assert.equal(runCli(['add-channel', P0.slug, '--kind', 'phone', '--value', '555-0100'], env).status, 0);
   assert.equal(
     runCli(
       [
@@ -319,19 +326,22 @@ function seedMergePair(dbPath: string): { env: Record<string, string> } {
         '--summary',
         'intro call',
         '--person',
-        'marla-sample-2',
+        `${P0.slug}-2`,
       ],
       env,
     ).status,
     0,
   );
   assert.equal(
-    runCli(['add-task', '--title', 'Marla follow-up', '--context', 'test', '--person', 'marla-sample-2'], env).status,
+    runCli(
+      ['add-task', '--title', `${P0.name.split(' ')[0]} follow-up`, '--context', 'test', '--person', `${P0.slug}-2`],
+      env,
+    ).status,
     0,
   );
-  assert.equal(runCli(['add-entity', '--kind', 'company', '--label', 'Sample Holdings'], env).status, 0);
+  assert.equal(runCli(['add-entity', '--kind', 'company', '--label', P1.employer], env).status, 0);
   assert.equal(
-    runCli(['link-entity', 'sample-holdings', '--target-type', 'person', '--target', 'marla-sample-2'], env).status,
+    runCli(['link-entity', slugFor(P1.employer), '--target-type', 'person', '--target', `${P0.slug}-2`], env).status,
     0,
   );
   return { env };
@@ -343,19 +353,19 @@ test('S12: merge-person moves all children and deletes the husk (json counts exa
   const dbPath = join(tmp, 'life.db');
   const { env } = seedMergePair(dbPath);
 
-  const r = runCli(['merge-person', 'marla-sample-2', '--into', 'marla-sample', '--json'], env);
+  const r = runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'merge-person');
-  assert.equal(out.from_slug, 'marla-sample-2');
-  assert.equal(out.into_slug, 'marla-sample');
+  assert.equal(out.from_slug, `${P0.slug}-2`);
+  assert.equal(out.into_slug, P0.slug);
   assert.equal(out.into_id, 1);
   assert.deepEqual(out.moved, { channels: 1, interactions: 1, files: 0, tasks: 1, links: 1 });
 
   // Husk gone; survivor intact; every child now points at person 1.
   const people = rawRows(dbPath, 'SELECT * FROM people');
   assert.equal(people.length, 1);
-  assert.equal(people[0].slug, 'marla-sample');
+  assert.equal(people[0].slug, P0.slug);
   const orphans = rawRows(
     dbPath,
     `SELECT (SELECT COUNT(*) FROM contact_channels WHERE person_id != 1) AS ch,
@@ -374,9 +384,9 @@ test('S12: merge-person human output prints the moved-count summary', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  const r = runCli(['merge-person', 'marla-sample-2', '--into', 'marla-sample'], env);
+  const r = runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug], env);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /merged marla-sample-2 into marla-sample/);
+  assert.match(r.stdout, new RegExp(`merged ${P0.slug}-2 into ${P0.slug}`));
   assert.match(r.stdout, /channels 1, interactions 1, files 0, tasks 1, links 1/);
 });
 
@@ -386,7 +396,7 @@ test('S12: merge-person preserves primary flags across the move', (t) => {
   const dbPath = join(tmp, 'life.db');
   const { env } = seedMergePair(dbPath);
 
-  assert.equal(runCli(['merge-person', 'marla-sample-2', '--into', 'marla-sample'], env).status, 0);
+  assert.equal(runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug], env).status, 0);
   // The from-person's primary email moved intact — still primary_flag 1,
   // same value, no delete+recreate side effects.
   const rows = rawRows(dbPath, "SELECT value, primary_flag FROM contact_channels WHERE kind = 'email'");
@@ -400,7 +410,7 @@ test('S12: merge-person refuses from == into', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  const r = runCli(['merge-person', 'marla-sample', '--into', 'marla-sample'], env);
+  const r = runCli(['merge-person', P0.slug, '--into', P0.slug], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /into itself/);
   assert.equal(rawRows(join(tmp, 'life.db'), 'SELECT COUNT(*) AS n FROM people')[0].n, 2);
@@ -411,10 +421,10 @@ test('S12: merge-person refuses unknown slugs', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  let r = runCli(['merge-person', 'ghost', '--into', 'marla-sample'], env);
+  let r = runCli(['merge-person', 'ghost', '--into', P0.slug], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no person with slug "ghost"/);
-  r = runCli(['merge-person', 'marla-sample-2', '--into', 'ghost'], env);
+  r = runCli(['merge-person', `${P0.slug}-2`, '--into', 'ghost'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no person with slug "ghost"/);
   assert.equal(rawRows(join(tmp, 'life.db'), 'SELECT COUNT(*) AS n FROM people')[0].n, 2);
@@ -425,7 +435,7 @@ test('S12: merge-person without --into exits 1 with usage', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  const r = runCli(['merge-person', 'marla-sample-2'], env);
+  const r = runCli(['merge-person', `${P0.slug}-2`], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /usage: hub merge-person/);
 });
@@ -454,7 +464,7 @@ test('S12: merge-person is atomic — a forced child-row failure moves nothing',
   const blocker = new DatabaseSync(dbPath);
   blocker.exec('BEGIN EXCLUSIVE');
   try {
-    const r = runCli(['merge-person', 'marla-sample-2', '--into', 'marla-sample', '--json'], env);
+    const r = runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug, '--json'], env);
     assert.equal(r.status, 1);
     assert.ok(r.stderr.length > 0);
     // Nothing moved, nobody deleted.
@@ -481,7 +491,10 @@ test('S12: merge-person handles the husk case (empty person, one dangling intera
 
   // The live pattern from 2026-10-27: husk row (no children) + one interaction
   // still pointing at it.
-  assert.equal(runCli(['add-person', '--name', 'Marla husk', '--slug', 'marla-husk'], env).status, 0);
+  assert.equal(
+    runCli(['add-person', '--name', `${P0.name.split(' ')[0]} husk`, '--slug', `${P0.slug}-husk`], env).status,
+    0,
+  );
   assert.equal(
     runCli(
       [
@@ -495,18 +508,21 @@ test('S12: merge-person handles the husk case (empty person, one dangling intera
         '--summary',
         'old thread',
         '--person',
-        'marla-husk',
+        `${P0.slug}-husk`,
       ],
       env,
     ).status,
     0,
   );
 
-  const r = runCli(['merge-person', 'marla-husk', '--into', 'marla-sample', '--json'], env);
+  const r = runCli(['merge-person', `${P0.slug}-husk`, '--into', P0.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.deepEqual(out.moved, { channels: 0, interactions: 1, files: 0, tasks: 0, links: 0 });
-  assert.equal(rawRows(dbPath, "SELECT COUNT(*) AS n FROM people WHERE slug = 'marla-husk'")[0].n, 0);
+  assert.equal(
+    rawRows(dbPath, `SELECT COUNT(*) AS n FROM people WHERE slug = '${P0.slug}-husk'`)[0].n,
+    0,
+  );
   assert.equal(
     rawRows(dbPath, "SELECT COUNT(*) AS n FROM interactions WHERE summary = 'old thread' AND person_id = 1")[0].n,
     1,
