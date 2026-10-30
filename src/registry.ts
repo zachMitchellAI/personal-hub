@@ -10,11 +10,18 @@
 // is the data it dispatches with.
 import type { VerbHandler } from './core/types.ts';
 import { cmdInit } from './commands/init.ts';
-import { cmdAddPerson, cmdGetPerson, cmdListPeople } from './commands/people.ts';
-import { cmdAddChannel, cmdListChannels, cmdRemoveChannel, cmdSetPrimary } from './commands/channels.ts';
+import { cmdAddPerson, cmdEditPerson, cmdGetPerson, cmdListPeople, cmdMergePerson } from './commands/people.ts';
+import {
+  cmdAddChannel,
+  cmdEditChannel,
+  cmdListChannels,
+  cmdRemoveChannel,
+  cmdSetPrimary,
+} from './commands/channels.ts';
 import { cmdAddInteraction, cmdListInteractions } from './commands/interactions.ts';
 import {
   cmdAddEntity,
+  cmdDeleteEntity,
   cmdLinkEntity,
   cmdListEntities,
   cmdListEntityLinks,
@@ -30,7 +37,15 @@ import {
   cmdListTrackables,
   cmdSetTrackableStatus,
 } from './commands/trackables.ts';
-import { cmdAddSubtask, cmdAddTask, cmdListTasks, cmdMarkSubtask, cmdSetTaskStatus } from './commands/tasks.ts';
+import {
+  cmdAddSubtask,
+  cmdAddTask,
+  cmdDeleteTask,
+  cmdEditTask,
+  cmdListTasks,
+  cmdMarkSubtask,
+  cmdSetTaskStatus,
+} from './commands/tasks.ts';
 import { PARSE_ARGS_OPTIONS, VERB_FLAGS, VERB_NAMES, optionType } from './core/registry-data.ts';
 
 export { PARSE_ARGS_OPTIONS, VERB_FLAGS, optionType };
@@ -78,6 +93,13 @@ export const VERBS: Record<string, VerbHandler> = {
   'list-files': cmdListFiles,
   // S8b — permanent re-runnable contact importer (DECISIONS #7).
   'import-vcf': cmdImportVcf,
+  // S12 — CRUD gap-closers: partial edits, hard deletes, person merge.
+  'edit-person': cmdEditPerson,
+  'edit-channel': cmdEditChannel,
+  'edit-task': cmdEditTask,
+  'delete-task': cmdDeleteTask,
+  'delete-entity': cmdDeleteEntity,
+  'merge-person': cmdMergePerson,
   'log-sync': cmdLogSync,
   'list-sync-log': cmdListSyncLog,
 };

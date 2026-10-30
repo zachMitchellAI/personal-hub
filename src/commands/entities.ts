@@ -1,5 +1,5 @@
 // Entity verbs: add-entity, list-entities, link-entity, list-entity-links,
-// unlink-entity. S7 — entities index anything worth tracking that is not
+// unlink-entity, delete-entity. S7 — entities index anything worth tracking that is not
 // already a person/task/interaction (concepts, projects, artifacts).
 // Deliberate surface note: entities have NO status column (the S7 ticket
 // defines no lifecycle), so there is no set-status verb — the S1–S6 pattern
@@ -16,6 +16,8 @@ import { ENTITY_LINK_TARGETS } from '../core/constants.ts';
 import type {
   AddEntityStatus,
   AddEntityValues,
+  CliValues,
+  DeleteStatus,
   EntityJson,
   EntityLinkJson,
   LinkEntityValues,
@@ -404,6 +406,39 @@ export async function cmdUnlinkEntity(values: UnlinkEntityValues, idArg?: string
       console.log(JSON.stringify(out, null, 2));
     } else {
       console.log(`removed entity link ${id}`);
+    }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `hub delete-entity`: hard delete an entity. entity_links rows referencing
+ * it cascade via the schema FK on entity_id.
+ * @param values - Parsed CLI flags.
+ * @param slugArg - First positional argument: the entity's slug.
+ * @returns Process exit code (0 = deleted, 1 = usage/unknown slug).
+ */
+export async function cmdDeleteEntity(values: CliValues, slugArg?: string): Promise<number> {
+  if (!slugArg) {
+    console.error('hub delete-entity: slug argument required');
+    return 1;
+  }
+  const { db } = openDb(values.db as string | undefined);
+  try {
+    const hub = makeDrizzle(db);
+    const row = await hub.select().from(entities).where(eq(entities.slug, slugArg)).get();
+    if (!row) {
+      console.error(`hub delete-entity: no entity with slug "${slugArg}"`);
+      return 1;
+    }
+    await hub.delete(entities).where(eq(entities.id, row.id)).run();
+    const out: DeleteStatus = { verb: 'delete-entity', deleted: row.slug, kind: 'entity' };
+    if (values.json) {
+      console.log(JSON.stringify(out, null, 2));
+    } else {
+      console.log(`deleted entity ${row.slug} ("${row.label}") — links cascaded`);
     }
     return 0;
   } finally {
