@@ -279,8 +279,6 @@ export async function cmdSetPrimary(values: CliValues, idArg?: string): Promise<
   }
 }
 
-// ---- S12 verb distributed from commands/crud.ts (verbatim move).
-
 /**
  * `hub edit-channel`: partial update on a contact channel. `primary_flag` and
  * `source` are deliberately NOT editable here — primary is set-primary's job
@@ -334,14 +332,3 @@ export async function cmdEditChannel(values: CliValues, idArg?: string): Promise
     db.close();
   }
 }
-
-/**
- * `hub edit-task`: partial update on a task row. `--due-date` passes the same
- * deterministic-ISO rule as add-task (fuzzy dates never parse); `--person`
- * re-points the person FK by slug (unknown slug = usage error, resolved
- * BEFORE the update). status/completed_at are set-task-status's job and are
- * not editable here.
- * @param values - Parsed CLI flags; at least one task field required.
- * @param idArg - First positional argument: the task id.
- * @returns Process exit code (0 = updated, 1 = usage/unknown id/slug).
- */
