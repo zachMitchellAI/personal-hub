@@ -16,19 +16,29 @@ SQLite DB. `hub search "tired"` should surface the interaction that says
 ## Design decisions (owner can veto at review)
 
 1. **Storage: sqlite-vec `vec0` virtual table inside `life.db`.** Same pattern
-   as the demo. The `vec0.so` binary loads from the OpenClaw install
-   (`~/.nvm/versions/node/v26.12.1/lib/node_modules/openclaw/node_modules/sqlite-vec-linux-x64/vec0.so`,
-   override with `$HUB_VEC0_SO`). Not an npm dependency — a preinstalled native
-   artifact, consistent with the zero-runtime-dep rule's spirit. **Portability
-   caveat:** a machine without the .so cannot init the embeddings schema
-   (documented; hub runs on owner machines where it exists).
+   as the demo. **Superseded (2026-10-31 portability pass, owner-approved):**
+   the vec0 binary now loads via the `sqlite-vec` npm package's
+   platform-resolved binary (approved second native/runtime dep after
+   drizzle-orm; AGENTS.md constraint #1 rewritten to a decide-on-purpose
+   gate). The OpenClaw-install .so path hack could not survive a node
+   upgrade. `$HUB_VEC0_SO` remains as a manual override for vendored builds.
+   A machine where the platform binary is missing/unusable degrades to
+   keyword search (unchanged behavior).
 2. **Scope: interactions first.** `interactions.summary` is the hub's free-text
    history — the recall target. People.notes / entities.content / tasks are
    follow-ups (documented below), not S13.
 3. **Embeddings are write-time, local, private.** Ollama `nomic-embed-text`
-   (768 dims, cosine) at `http://localhost:11434` (`$HUB_OLLAMA` override).
-   Model name pinned per-row (`embedding_meta` + column) — vectors from
-   different models are never mixed.
+   (768 dims, cosine) at `http://localhost:11434`. Model/dim/endpoint are
+   **configurable per machine** (2026-10-31 pass): `HUB_EMBED_MODEL`,
+   `HUB_EMBED_DIM`, `HUB_OLLAMA` — via env or the hub config file
+   (`$XDG_CONFIG_HOME/hub/env`, default `~/.config/hub/env`; `HUB_CONFIG`
+   overrides the path; plain `KEY=VALUE` lines, resolved env > file >
+   default, see `core/config.ts`). Model name pinned per-row
+   (`embedding_meta` + column) — vectors from different models are never
+   mixed; a model or dim change on existing data requires
+   `reindex-embeddings --force`. The vec0 column width comes from config via
+   `{{EMBED_DIM}}` token substitution in migration 009 — a fresh init under a
+   different dim creates the table at that width.
 4. **Embedding failure never fails the write.** The interaction row is the
    source of truth; the vector is derived. If Ollama is down, `add-interaction`
    warns on stderr, the row lands, and the backfill verb repairs the index.

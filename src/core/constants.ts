@@ -263,7 +263,13 @@ Environment:
   HUB_DB           Default database path
   HUB_FILES        Durable files root (default: ~/hub/files)
   HUB_MIGRATIONS   Migrations directory (default: ./migrations beside this file)
-  HUB_VEC0_SO      sqlite-vec extension path (default: the OpenClaw install's
-                   bundled vec0.so)
+  HUB_EMBED_MODEL  Ollama embedding model (default: nomic-embed-text; a model
+                   or dim change on existing data requires reindex --force)
+  HUB_EMBED_DIM    Embedding/vec0 column width (default: 768)
+  HUB_VEC0_SO      Manual sqlite-vec vec0.so path (default: the sqlite-vec
+                   npm package's platform binary; set only for vendored builds)
   HUB_OLLAMA       Ollama base URL (default: http://localhost:11434)
+  HUB_CONFIG       Config-file override (default: $XDG_CONFIG_HOME/hub/env,
+                   else ~/.config/hub/env) — flat KEY=VALUE lines; any HUB_*
+                   setting above may live there instead of the environment
   HUB_DEBUG        Set to print embedding-failure details on stderr`;

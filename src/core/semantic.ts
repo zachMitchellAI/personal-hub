@@ -1,58 +1,56 @@
 // Semantic-search plumbing (S13): sqlite-vec extension loading, local Ollama
-// embeddings, and the vec0 row-insert helpers. Zero runtime deps — node:
-// built-ins plus the preinstalled vec0.so (not an npm dependency, consistent
-// with the zero-dep rule's spirit; the .so ships with the OpenClaw install).
+// embeddings, and the vec0 row-insert helpers. Runtime deps: the `sqlite-vec`
+// npm package (owner-approved exception 2026-10-31) — its load() resolves the
+// platform-appropriate vec0 binary from our own node_modules, so this works
+// across machines and node versions (the previous OpenClaw-install .so path
+// hack did not survive an nvm upgrade). Model/dim/endpoint are configurable
+// via core/config.ts (env > ~/.config/hub/env > defaults).
 //
 // Failure model (ticket S13): embedding failure never fails the write. The
 // interaction row is the source of truth; the vector is derived. Callers
 // (add-interaction, reindex-embeddings) catch embed errors and warn, and the
 // backfill verb repairs the index later.
-import { existsSync } from 'node:fs';
-import process from 'node:process';
 import type { DatabaseSync } from 'node:sqlite';
+import * as sqliteVec from 'sqlite-vec';
+import { semanticConfig, type SemanticConfig } from './config.ts';
 
 /**
- * The embedding model name as Ollama reports it — pinned per row in
- * `embedding_meta` (vectors from different models are not comparable, so a
- * model swap means re-embed everything: `reindex-embeddings --force`).
+ * Resolve the semantic-search settings once per process (env > config file >
+ * defaults). Consumers destructure model/dim/ollama from this instead of
+ * reading constants — a machine swap or model change is config, not code.
  */
-export const EMBED_MODEL = 'nomic-embed-text';
+const CFG: SemanticConfig = semanticConfig();
 
-/** nomic-embed-text output dimension; also the vec0 column width. */
-export const EMBED_DIM = 768;
+/** The embedding model (as Ollama reports it) this process embeds with. */
+export const EMBED_MODEL = CFG.model;
 
-/**
- * Absolute path to the sqlite-vec vec0.so shipped with the OpenClaw install
- * (`$HUB_VEC0_SO` overrides). Loaded directly instead of adding an npm
- * dependency; a machine without the .so cannot init migration 009's vector
- * table (documented portability caveat — the hub runs on owner machines
- * where it exists).
- */
-const VEC0_SO =
-  '/home/zachary/.nvm/versions/node/v26.12.1/lib/node_modules/openclaw/node_modules/sqlite-vec-linux-x64/vec0.so';
+/** The embedding dimension this process expects; the vec0 column width. */
+export const EMBED_DIM = CFG.dim;
 
 /**
- * Resolve the vec0 extension path: `$HUB_VEC0_SO` when set, otherwise the
- * OpenClaw-install default.
- * @returns The extension path to attempt.
- */
-function vec0SoPath(): string {
-  return process.env.HUB_VEC0_SO ?? VEC0_SO;
-}
-
-/**
- * Load the sqlite-vec vec0 extension onto an open connection. The connection
- * MUST have been constructed with `allowExtension: true` (openHubDb does
- * this) — loading later throws otherwise. Non-fatal by design: a machine
- * without the .so opens fine and merely loses vector capabilities.
+ * Load the sqlite-vec vec0 extension onto an open connection. Uses the
+ * sqlite-vec npm package's platform-resolved binary by default;
+ * `$HUB_VEC0_SO` forces a specific .so (vendored builds, debugging).
+ * Connection MUST have been constructed with `allowExtension: true`
+ * (openHubDb does this). Non-fatal by design: npm-install gaps (an
+ * unsupported platform, install scripts skipped) degrade to keyword search —
+ * the caller treats a failure here as "no vectors".
  * @param db - An open `DatabaseSync` connection.
- * @returns True when the extension loaded; false when the .so is missing.
+ * @returns True when the extension loaded; false when it could not.
  */
 export function loadVec0(db: DatabaseSync): boolean {
-  const so = vec0SoPath();
-  if (!existsSync(so)) return false;
-  db.loadExtension(so);
-  return true;
+  try {
+    if (CFG.vec0So !== undefined) {
+      db.loadExtension(CFG.vec0So);
+    } else {
+      sqliteVec.load(db);
+    }
+    return true;
+  } catch {
+    // Not throwable: an absent/broken platform binary is the documented
+    // degrade-to-keyword path, not an error condition.
+    return false;
+  }
 }
 
 /**
@@ -71,8 +69,8 @@ export function hasVec0(db: DatabaseSync): boolean {
   }
 }
 
-/** Ollama's local endpoint (`$HUB_OLLAMA` overrides); private, nothing leaves the machine. */
-export const OLLAMA = 'http://localhost:11434';
+/** Ollama's local endpoint; overridable via the semantic config. */
+export const OLLAMA = CFG.ollama;
 
 /**
  * Embed one text with the local Ollama model (`/api/embed`). One HTTP call
@@ -83,7 +81,7 @@ export const OLLAMA = 'http://localhost:11434';
  * @returns A Float32Array of EMBED_DIM values from Ollama.
  */
 export async function embed(text: string): Promise<Float32Array> {
-  const base = process.env.HUB_OLLAMA ?? OLLAMA;
+  const base = CFG.ollama;
   const res = await fetch(`${base}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

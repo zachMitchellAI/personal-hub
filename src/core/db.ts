@@ -43,8 +43,10 @@ export function openHubDb(path: string): DatabaseSync {
  * and apply pending migrations idempotently so writes always see the full
  * schema. The sqlite-vec extension is loaded before migrations when the .so
  * is present (S13's vec0 virtual tables need it at CREATE time) and its
- * presence is reported back — a machine without the .so opens fine but skips
- * the vector migration and degrades to keyword search.
+ * presence is reported back — a machine without a usable vec0 binary opens
+ * fine but skips the vector migration and degrades to keyword search. The
+ * configured embedding dim (core/config.ts) rides into migration 009 as a
+ * token substitution, so the vec0 column width matches the configured model.
  * @param dbFlag - The `--db` flag value, if provided.
  * @returns The open connection, its resolved path, the versions applied, and
  * whether vec0 is usable on this connection.
