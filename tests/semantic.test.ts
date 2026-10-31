@@ -26,6 +26,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import * as sqliteVec from 'sqlite-vec';
 
 const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
 
@@ -180,10 +181,7 @@ test(
 
     const db = new DatabaseSync(dbPath, { allowExtension: true });
     try {
-      db.loadExtension(
-        process.env.HUB_VEC0_SO ??
-          '/home/zachary/.nvm/versions/node/v26.12.1/lib/node_modules/openclaw/node_modules/sqlite-vec-linux-x64/vec0.so',
-      );
+      db.loadExtension(sqliteVec.getLoadablePath());
       const meta = db.prepare('SELECT model, dims FROM embedding_meta WHERE id = 1').get() as
         | {
             model: string;
@@ -474,10 +472,7 @@ test('S13: reindex --force re-embeds every interaction', { skip: ollamaUp ? fals
   // WITHOUT vec0 here — a plain reader counts the shadow rowids table instead.
   const db = new DatabaseSync(dbPath, { allowExtension: true });
   try {
-    db.loadExtension(
-      process.env.HUB_VEC0_SO ??
-        '/home/zachary/.nvm/versions/node/v26.12.1/lib/node_modules/openclaw/node_modules/sqlite-vec-linux-x64/vec0.so',
-    );
+    db.loadExtension(sqliteVec.getLoadablePath());
     const n = db.prepare('SELECT count(*) AS n FROM interaction_embeddings').get() as { n: number };
     assert.equal(n.n, 4);
     // Interactions untouched.

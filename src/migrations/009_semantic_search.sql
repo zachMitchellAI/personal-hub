@@ -9,9 +9,17 @@
 --     (sqlite-vec's supported hybrid pattern; cosine for text).
 -- vec0 is a loadable extension: this migration only applies on a connection
 -- that loaded vec0 first (core/semantic.ts loadVec0), and openDb treats a
--- missing vec0.so as non-fatal — such connections skip this file (REQUIRES-EXT
--- gate in migrations.ts) and stay at the previous user_version, degrading to
--- keyword search (documented portability caveat; vector verbs fail cleanly).
+-- missing/broken platform binary as non-fatal — such connections skip this
+-- file (REQUIRES-EXT gate in migrations.ts) and stay at the previous
+-- user_version, degrading to keyword search (documented portability caveat;
+-- vector verbs fail cleanly).
+--
+-- {{EMBED_DIM}} is token-substituted with the configured embedding width
+-- (core/config.ts semanticConfig, default 768 for nomic-embed-text) before
+-- execution: vectors from a differently-sized model get their column width
+-- from config, not from a hardcoded DDL constant. A database created under
+-- one dim cannot be re-run under another — the embedding_meta singleton +
+-- `reindex-embeddings --force` govern model/dim changes on existing data.
 -- REQUIRES-EXT: vec0
 CREATE TABLE embedding_meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -24,5 +32,5 @@ CREATE VIRTUAL TABLE interaction_embeddings USING vec0(
   interaction_id INTEGER PRIMARY KEY,
   person_id INTEGER PARTITION KEY,
   date TEXT METADATA,
-  embedding float[768] distance_metric=cosine
+  embedding float[{{EMBED_DIM}}] distance_metric=cosine
 );

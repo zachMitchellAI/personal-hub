@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { semanticConfig } from './core/config.ts';
 
 // Migrations are NNN_name.sql: 3+ digit zero-padded version, lowercase-dashed name.
 const MIGRATION_RE = /^(\d{3,})_[a-z0-9_-]+\.sql$/;
@@ -43,11 +44,22 @@ function getUserVersion(db: DatabaseSync): number {
  * @param db - An open `DatabaseSync` connection (pragmas already asserted).
  * @param dir - Directory containing `NNN_name.sql` migration files.
  * @param vec0 - Whether the sqlite-vec extension is usable on this connection.
+ * @param substitutions - `{{KEY}}` → value replacements applied to every
+ *   migration's SQL before execution (core/config.ts resolved values, e.g.
+ *   EMBED_DIM for 009's vec0 column width).
  * @throws When a migration file's SQL fails; the transaction is rolled back first.
  * @returns The versions applied this run, the resulting user_version, and any
  * extension-gated files skipped this run.
  */
-export function runMigrations(db: DatabaseSync, dir: string, vec0 = true): MigrationResult {
+export function runMigrations(
+  db: DatabaseSync,
+  dir: string,
+  vec0 = true,
+  substitutions: Record<string, string> = { EMBED_DIM: String(semanticConfig().dim) },
+): MigrationResult {
+  // Default substitution: the configured embedding dim, so EVERY caller
+  // (tests included) creates 009's vec0 table at the config-resolved width.
+  // Callers may extend/override the map (e.g. tests pinning a custom dim).
   const files = readdirSync(dir)
     .filter((f) => MIGRATION_RE.test(f))
     .sort();
@@ -75,7 +87,11 @@ export function runMigrations(db: DatabaseSync, dir: string, vec0 = true): Migra
 
     db.exec('BEGIN');
     try {
-      db.exec(sql);
+      // Token substitution before execution: `{{KEY}}` placeholders in the
+      // SQL (e.g. {{EMBED_DIM}} in 009) are replaced from the caller-supplied
+      // map, so config-resolved values land in DDL without string building
+      // here. Unknown tokens are left alone (they may be literal SQL).
+      db.exec(Object.entries(substitutions).reduce((sql, [key, value]) => sql.split(`{{${key}}}`).join(value), sql));
       // user_version is transactional here — it only lands if the COMMIT lands.
       db.exec(`PRAGMA user_version = ${version}`);
       if (db.isTransaction) db.exec('COMMIT');
