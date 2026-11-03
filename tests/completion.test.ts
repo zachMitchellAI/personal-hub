@@ -75,9 +75,14 @@ const ALL_VERBS = [
   'import-vcf',
   'log-sync',
   'list-sync-log',
-  // S13 — semantic search.
   'search',
   'reindex-embeddings',
+  'edit-person',
+  'edit-channel',
+  'edit-task',
+  'delete-task',
+  'delete-entity',
+  'merge-person',
 ];
 
 const ADD_VERBS = ALL_VERBS.filter((v) => v.startsWith('add-'));
