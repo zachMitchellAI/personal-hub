@@ -63,6 +63,8 @@ export const PARSE_ARGS_OPTIONS = {
   k: { type: 'string' },
   mode: { type: 'string' },
   force: { type: 'boolean', default: false },
+  // S12 merge-person: target slug (the surviving row).
+  into: { type: 'string' },
 } as const;
 
 /** Verb names only — the data-only mirror of the VERBS map's key order. */
@@ -103,6 +105,13 @@ export const VERB_NAMES = [
   // S13 — semantic search.
   'search',
   'reindex-embeddings',
+  // S12 — CRUD verbs (partial edits, hard deletes, person merge).
+  'edit-person',
+  'edit-channel',
+  'edit-task',
+  'delete-task',
+  'delete-entity',
+  'merge-person',
 ] as const;
 
 /**
@@ -144,6 +153,13 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   'add-file': ['path', 'kind', 'person', 'task', 'note'],
   'list-files': ['person', 'task', 'kind'],
   'import-vcf': ['dry-run'],
+  // S12 — CRUD verbs. merge-person takes the from-slug as its positional.
+  'edit-person': ['name', 'first-name', 'last-name', 'relationship-type', 'employer', 'notes'],
+  'edit-channel': ['kind', 'value'],
+  'edit-task': ['title', 'context', 'due-date', 'person', 'notes'],
+  'delete-task': [],
+  'delete-entity': [],
+  'merge-person': ['into'],
   'log-sync': ['entity', 'entity-id', 'action', 'direction', 'adapter', 'detail'],
   'list-sync-log': ['adapter', 'direction', 'entity'],
   // S13 — semantic search.

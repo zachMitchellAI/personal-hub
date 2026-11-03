@@ -1,4 +1,5 @@
-// Task verbs: add-task, set-task-status, list-tasks, add-subtask, mark-subtask.
+// Task verbs: add-task, set-task-status, list-tasks, add-subtask, mark-subtask,
+// edit-task, delete-task (S12 amendment: moved verbatim from commands/crud.ts).
 // S4 — tasks + subtasks. Business rules live in the write path (AGENTS.md):
 // completed_at is CLI-managed (stamped on →completed, cleared on leaving it),
 // due_date is validated as a deterministic ISO date before it ever reaches
@@ -14,6 +15,9 @@ import type {
   AddTaskStatus,
   AddTaskValues,
   AddSubtaskValues,
+  CliValues,
+  DeleteStatus,
+  EditTaskStatus,
   ListTasksStatus,
   ListTasksValues,
   MarkSubtaskStatus,
@@ -400,6 +404,138 @@ export async function cmdMarkSubtask(values: MarkSubtaskValues, idArg?: string):
       console.log(JSON.stringify(out, null, 2));
     } else {
       console.log(`subtask ${id} (${row.label}) marked ${done ? 'done' : 'not done'}`);
+    }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `hub edit-task`: partial update on a task row. `--due-date` passes the same
+ * deterministic-ISO rule as add-task (fuzzy dates never parse); `--person`
+ * re-points the person FK by slug (unknown slug = usage error, resolved
+ * BEFORE the update). status/completed_at are set-task-status's job and are
+ * not editable here.
+ * @param values - Parsed CLI flags; at least one task field required.
+ * @param idArg - First positional argument: the task id.
+ * @returns Process exit code (0 = updated, 1 = usage/unknown id/slug).
+ */
+export async function cmdEditTask(values: CliValues, idArg?: string): Promise<number> {
+  const id = parseId(idArg);
+  if (id === null) {
+    console.error('hub edit-task: task id argument required');
+    return 1;
+  }
+
+  const set: Partial<typeof tasks.$inferInsert> = {};
+  if (values.title !== undefined) set.title = values.title as string;
+  if (values.context !== undefined) set.context = values.context as string;
+  if (values.notes !== undefined) set.notes = values.notes as string;
+
+  // Deterministic dates only — same rule as add-task ("next friday" rejects).
+  if (values['due-date'] !== undefined) {
+    const iso = parseIsoDate(values['due-date'] as string);
+    if (!iso) {
+      console.error(`hub edit-task: --due-date must be an ISO date (YYYY-MM-DD), got "${values['due-date']}"`);
+      return 1;
+    }
+    set.dueDate = iso;
+  }
+
+  const { db } = openDb(values.db as string | undefined);
+  try {
+    const hub = makeDrizzle(db);
+
+    // Resolve the person re-point BEFORE the update so an unknown slug is a
+    // clean usage error rather than a mid-write FK failure.
+    if (values.person !== undefined) {
+      const person = await hub
+        .select()
+        .from(people)
+        .where(eq(people.slug, values.person as string))
+        .get();
+      if (!person) {
+        console.error(`hub edit-task: no person with slug "${values.person}"`);
+        return 1;
+      }
+      set.personId = person.id;
+    }
+
+    if (Object.keys(set).length === 0) {
+      console.error('hub edit-task: nothing to update — provide --title --context --due-date --notes --person');
+      return 1;
+    }
+
+    const row = await hub.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (!row) {
+      console.error(`hub edit-task: no task with id ${id}`);
+      return 1;
+    }
+    await hub.update(tasks).set(set).where(eq(tasks.id, id)).run();
+    const fresh = await hub.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (!fresh) throw new Error('update vanished — row not found after edit');
+    const subtaskRows = await hub.select().from(subtasks).where(eq(subtasks.taskId, id)).all();
+
+    const out: EditTaskStatus = {
+      verb: 'edit-task',
+      id: fresh.id,
+      title: fresh.title,
+      person_id: fresh.personId,
+      context: fresh.context,
+      status: fresh.status,
+      due_date: fresh.dueDate,
+      completed_at: fresh.completedAt,
+      origin: fresh.origin,
+      notes: fresh.notes,
+      trello_visible: fresh.trelloVisible,
+      created_at: fresh.createdAt,
+      subtasks: subtaskRows.map((s) => ({
+        id: s.id,
+        task_id: s.taskId,
+        label: s.label,
+        done: s.done,
+        position: s.position,
+      })),
+    };
+    if (values.json) {
+      console.log(JSON.stringify(out, null, 2));
+    } else {
+      console.log(`edited task ${id}: updated ${Object.keys(set).join(', ')}`);
+    }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `hub delete-task`: hard delete a task. Subtasks cascade via the schema FK
+ * (ON DELETE CASCADE) — the test proves it, not just the schema comment.
+ * @param values - Parsed CLI flags.
+ * @param idArg - First positional argument: the task id.
+ * @returns Process exit code (0 = deleted, 1 = usage/unknown id).
+ */
+export async function cmdDeleteTask(values: CliValues, idArg?: string): Promise<number> {
+  const id = parseId(idArg);
+  if (id === null) {
+    console.error('hub delete-task: task id argument required');
+    return 1;
+  }
+  const { db } = openDb(values.db as string | undefined);
+  try {
+    const hub = makeDrizzle(db);
+    const row = await hub.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (!row) {
+      console.error(`hub delete-task: no task with id ${id}`);
+      return 1;
+    }
+    await hub.delete(tasks).where(eq(tasks.id, id)).run();
+    const out: DeleteStatus = { verb: 'delete-task', deleted: id, kind: 'task' };
+    if (values.json) {
+      console.log(JSON.stringify(out, null, 2));
+    } else {
+      console.log(`deleted task ${id} ("${row.title}") — subtasks cascaded`);
     }
     return 0;
   } finally {

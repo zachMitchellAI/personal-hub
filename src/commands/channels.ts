@@ -1,4 +1,5 @@
-// Channel verbs: add-channel, list-channels, remove-channel, set-primary.
+// Channel verbs: add-channel, list-channels, remove-channel, set-primary,
+// edit-channel (S12 amendment: moved verbatim from commands/crud.ts).
 // S3 — contact_channels. kind/value are data (no enum, no validation beyond
 // required-ness). At most one primary per (person, kind) is enforced HERE, in
 // the CLI write path: demote-then-set inside a single transaction. The proxy
@@ -11,6 +12,7 @@ import type {
   AddChannelStatus,
   ChannelJson,
   CliValues,
+  EditChannelStatus,
   ListChannelsStatus,
   RemoveChannelStatus,
   SetPrimaryStatus,
@@ -270,6 +272,60 @@ export async function cmdSetPrimary(values: CliValues, idArg?: string): Promise<
       console.log(JSON.stringify(status, null, 2));
     } else {
       console.log(`channel ${row.id} (${row.kind} "${row.value}") is now primary for ${status.slug}`);
+    }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `hub edit-channel`: partial update on a contact channel. `primary_flag` and
+ * `source` are deliberately NOT editable here — primary is set-primary's job
+ * (it owns the demote-then-set transaction), source is import provenance.
+ * @param values - Parsed CLI flags; --kind and/or --value required.
+ * @param idArg - First positional argument: the channel id.
+ * @returns Process exit code (0 = updated, 1 = usage/unknown id).
+ */
+export async function cmdEditChannel(values: CliValues, idArg?: string): Promise<number> {
+  const id = parseId(idArg);
+  if (id === null) {
+    console.error('hub edit-channel: channel id argument required');
+    return 1;
+  }
+  const set: Partial<typeof contactChannels.$inferInsert> = {};
+  if (values.kind !== undefined) set.kind = values.kind as string;
+  if (values.value !== undefined) set.value = values.value as string;
+  if (Object.keys(set).length === 0) {
+    console.error('hub edit-channel: nothing to update — provide --kind and/or --value');
+    return 1;
+  }
+
+  const { db } = openDb(values.db as string | undefined);
+  try {
+    const hub = makeDrizzle(db);
+    const row = await hub.select().from(contactChannels).where(eq(contactChannels.id, id)).get();
+    if (!row) {
+      console.error(`hub edit-channel: no channel with id ${id}`);
+      return 1;
+    }
+    await hub.update(contactChannels).set(set).where(eq(contactChannels.id, id)).run();
+    const fresh = await hub.select().from(contactChannels).where(eq(contactChannels.id, id)).get();
+    if (!fresh) throw new Error('update vanished — row not found after edit');
+
+    const out: EditChannelStatus = {
+      verb: 'edit-channel',
+      id: fresh.id,
+      person_id: fresh.personId,
+      kind: fresh.kind,
+      value: fresh.value,
+      primary_flag: fresh.primaryFlag,
+      source: fresh.source,
+    };
+    if (values.json) {
+      console.log(JSON.stringify(out, null, 2));
+    } else {
+      console.log(`edited channel ${id}: updated ${Object.keys(set).join(', ')}`);
     }
     return 0;
   } finally {
