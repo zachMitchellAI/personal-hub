@@ -18,7 +18,7 @@
 // snapshot hazard), so the sql.raw form would be this same SQL behind
 // extra ceremony. Performance is a non-issue; value typing is the gate.
 // KNN queries select the named key column, never rowid.
-import { makeDrizzle, openDb } from '../core/db.ts';
+import { makeDrizzle, openDb, type HubDb } from '../core/db.ts';
 import { interactions, people } from '../schema.ts';
 import { parseIsoDate } from '../core/util.ts';
 import { EMBED_DIM, EMBED_MODEL, embed, hasVec0, insertVecRow, serializeVec } from '../core/semantic.ts';
@@ -30,6 +30,7 @@ import type {
   ReindexEmbeddingsValues,
 } from '../core/types.ts';
 import { eq, inArray } from 'drizzle-orm';
+import type { DatabaseSync } from 'node:sqlite';
 import process from 'node:process';
 
 /** One interaction row prepared for ranking (shared by both search modes). */
@@ -39,6 +40,26 @@ interface CandidateRow {
   personSlug: string | null;
   date: string;
   summary: string;
+}
+
+/**
+ * A `--mode` value for `hub search`: `auto` (hybrid when the environment
+ * allows it, keyword otherwise), or a forced `hybrid` / `keyword`.
+ */
+type SearchMode = 'auto' | 'hybrid' | 'keyword';
+
+/**
+ * Parse a CLI string into the closed `--mode` union — the boundary gets the
+ * typed value instead of later code re-reading bare strings (PR #1 review
+ * r4483262). Deliberately no `zod` here: the set is three literals, and a
+ * validation dependency would cost more than it validates (repo zero-dep
+ * rule). Revisit if validation grows beyond literal sets.
+ * @param raw - The raw `--mode` flag value.
+ * @returns The parsed mode, or null when the value is not one of the three.
+ */
+function parseSearchMode(raw: string): SearchMode | null {
+  if (raw === 'auto' || raw === 'hybrid' || raw === 'keyword') return raw;
+  return null;
 }
 
 /**
@@ -65,7 +86,7 @@ function keywordScore(query: string, summary: string): number {
  * @param hub - The typed drizzle handle.
  * @returns All interactions with their optional person slug attached.
  */
-async function loadCandidates(hub: ReturnType<typeof makeDrizzle>): Promise<CandidateRow[]> {
+async function loadCandidates(hub: HubDb): Promise<CandidateRow[]> {
   const rows = await hub
     .select({
       id: interactions.id,
@@ -90,15 +111,15 @@ async function loadCandidates(hub: ReturnType<typeof makeDrizzle>): Promise<Cand
  * @param query - Raw query text.
  * @param person - Optional person slug prefilter.
  * @param since - Optional ISO date floor.
- * @param k - Max results.
- * @returns Ranked rows (best token overlap first), at most k.
+ * @param maxResults - Max results (the `--k` flag).
+ * @returns Ranked rows (best token overlap first), at most maxResults.
  */
 async function keywordSearch(
-  hub: ReturnType<typeof makeDrizzle>,
+  hub: HubDb,
   query: string,
   person: string | null,
   since: string | null,
-  k: number,
+  maxResults: number,
 ): Promise<SearchResultJson[]> {
   const rows = await loadCandidates(hub);
   return rows
@@ -106,7 +127,7 @@ async function keywordSearch(
     .map((r) => ({ ...r, distance: keywordScore(query, r.summary) }))
     .filter((r) => r.distance > 0)
     .sort((a, b) => b.distance - a.distance || a.id - b.id)
-    .slice(0, k)
+    .slice(0, maxResults)
     .map((r) => ({
       interaction_id: r.id,
       person_slug: r.personSlug,
@@ -128,16 +149,16 @@ async function keywordSearch(
  * @param query - Raw question text (will be embedded).
  * @param person - Optional person slug prefilter (resolved to its id).
  * @param since - Optional ISO date floor.
- * @param k - Max results.
+ * @param maxResults - Max results (the `--k` flag).
  * @returns Ranked rows, nearest (smallest cosine distance) first.
  */
 async function hybridSearch(
-  db: import('node:sqlite').DatabaseSync,
-  hub: ReturnType<typeof makeDrizzle>,
+  db: DatabaseSync,
+  hub: HubDb,
   query: string,
   person: string | null,
   since: string | null,
-  k: number,
+  maxResults: number,
 ): Promise<SearchResultJson[]> {
   // Resolve the person prefilter to its id first: the vec0 partition key is
   // the numeric person_id, and an unknown slug is the caller's usage error.
@@ -148,7 +169,7 @@ async function hybridSearch(
     personId = p.id;
   }
 
-  const qv = serializeVec(await embed(query));
+  const queryVector = serializeVec(await embed(query));
 
   // vec0 KNN: `embedding MATCH ? AND k = ?` is the KNN form; the partition
   // key and metadata columns act as prefilter predicates evaluated inside
@@ -158,15 +179,26 @@ async function hybridSearch(
   //    is CONSTANT-folded before vec0's partition pruning sees it, so
   //   `--person x --since y` could return rows from other partitions/dates.
   //    Hence the two-step form: the KNN subquery runs UNFILTERED with
-  //    k = max(k, row count) — never fewer than k post-filter survivors —
-  //    and the prefilters apply again in the OUTER WHERE with a LIMIT k.
-  //    Filters still run inside the subquery (cheap, indexed); the outer
-  //    pass only guarantees their correctness.
+  //    knnLimit = max(maxResults, row count) — never fewer than maxResults
+  //    post-filter survivors — and the prefilters apply again in the OUTER
+  //    WHERE with a LIMIT maxResults. Filters still run inside the subquery
+  //    (cheap, indexed); the outer pass only guarantees their correctness.
   //   2. Person params must arrive as real numbers and dates as real
   //    strings — string-typed values mismatch the column affinity and
   //    silently match nothing.
-  const total = db.prepare('SELECT count(*) AS n FROM interaction_embeddings').get() as { n: number };
-  const knn = Math.max(k, total.n);
+  // Bind params use SQLite's ?N positional numbering, filled by .all(...)
+  // below in order:
+  //   ?1 = query vector (BLOB from serializeVec)  ?2 = person id (null = no filter)
+  //   ?3 = since date (null = no filter)          ?4 = KNN width (knnLimit)
+  //   ?5 = final maxResults cap on the outer pass
+  // (The bare `k` in `AND k = ?4` is vec0's reserved KNN-width column —
+  // SQL-side syntax, not a local variable name.)
+  const vectorCount = (
+    db.prepare('SELECT count(*) AS total FROM interaction_embeddings').get() as {
+      total: number;
+    }
+  ).total;
+  const knnLimit = Math.max(maxResults, vectorCount);
   const vecRows = db
     .prepare(
       `SELECT interaction_id, distance FROM (
@@ -180,7 +212,7 @@ async function hybridSearch(
        ORDER BY distance
        LIMIT ?5`,
     )
-    .all(qv, personId, since, knn, k) as { interaction_id: number; distance: number }[];
+    .all(queryVector, personId, since, knnLimit, maxResults) as { interaction_id: number; distance: number }[];
 
   if (vecRows.length === 0) return [];
   const byId = new Map(vecRows.map((v) => [v.interaction_id, v.distance]));
@@ -219,19 +251,19 @@ async function hybridSearch(
  */
 export async function cmdSearch(values: SearchValues, queryArg?: string): Promise<number> {
   const query = queryArg ?? '';
-  const mode = values.mode ?? 'auto';
-  if (!['auto', 'hybrid', 'keyword'].includes(mode)) {
-    console.error(`hub search: --mode must be auto|hybrid|keyword, got "${mode}"`);
+  const mode = parseSearchMode(values.mode ?? 'auto');
+  if (mode === null) {
+    console.error(`hub search: --mode must be auto|hybrid|keyword, got "${values.mode ?? ''}"`);
     return 1;
   }
-  let k = 5;
+  let maxResults = 5;
   if (values.k !== undefined) {
-    const n = Number(values.k);
-    if (!Number.isInteger(n) || n <= 0) {
+    const flagValue = Number(values.k);
+    if (!Number.isInteger(flagValue) || flagValue <= 0) {
       console.error(`hub search: --k must be a positive integer, got "${values.k}"`);
       return 1;
     }
-    k = n;
+    maxResults = flagValue;
   }
   let since: string | null = null;
   if (values.since) {
@@ -253,24 +285,24 @@ export async function cmdSearch(values: SearchValues, queryArg?: string): Promis
 
     // Mode resolution: auto = hybrid when vec0 is loaded AND Ollama answers;
     // anything else falls back to keyword. Ollama reachability is probed by
-    // attempting the embed — there is no cheaper honest check.
+    // attempting the embed — there is no cheaper honest check. One keyword
+    // pathway (useKeywordSearch); hybrid is attempted once and degrades to
+    // that same pathway when the embed or the KNN query fails.
+    const useKeywordSearch = (): Promise<SearchResultJson[]> => keywordSearch(hub, query, person, since, maxResults);
     let usedMode: 'hybrid' | 'keyword';
     let results: SearchResultJson[];
-    if (mode === 'keyword') {
+    if (mode === 'keyword' || !vec0 || !hasVec0(db)) {
       usedMode = 'keyword';
-      results = await keywordSearch(hub, query, person, since, k);
-    } else if (vec0 && hasVec0(db)) {
+      results = await useKeywordSearch();
+    } else {
       try {
-        results = await hybridSearch(db, hub, query, person, since, k);
+        results = await hybridSearch(db, hub, query, person, since, maxResults);
         usedMode = 'hybrid';
       } catch {
         // Ollama down (or the KNN query failed) — degrade to keyword, exit 0.
         usedMode = 'keyword';
-        results = await keywordSearch(hub, query, person, since, k);
+        results = await useKeywordSearch();
       }
-    } else {
-      usedMode = 'keyword';
-      results = await keywordSearch(hub, query, person, since, k);
     }
 
     const out: SearchStatus = { verb: 'search', mode: usedMode, count: results.length, results };
@@ -296,7 +328,7 @@ export async function cmdSearch(values: SearchValues, queryArg?: string): Promis
  * pins EMBED_MODEL.
  * @param db - An open connection with vec0 loaded (migration 009 applied).
  */
-function ensureEmbeddingMeta(db: import('node:sqlite').DatabaseSync): void {
+function ensureEmbeddingMeta(db: DatabaseSync): void {
   db.exec(
     `INSERT INTO embedding_meta (id, model, dims, created_at) VALUES (1, '${EMBED_MODEL}', ${EMBED_DIM}, '${new Date().toISOString()}')
      ON CONFLICT(id) DO NOTHING`,
@@ -321,7 +353,7 @@ function ensureEmbeddingMeta(db: import('node:sqlite').DatabaseSync): void {
  * null for a people-less interaction (partition key NULL).
  */
 async function embedInteraction(
-  db: import('node:sqlite').DatabaseSync,
+  db: DatabaseSync,
   id: number,
   summary: string,
   date: string,
@@ -355,7 +387,7 @@ async function embedInteraction(
  * @param personId - The interaction's person id, or null.
  */
 export async function embedAfterAdd(
-  db: import('node:sqlite').DatabaseSync,
+  db: DatabaseSync,
   id: number,
   summary: string,
   date: string,
