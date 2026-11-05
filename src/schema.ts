@@ -344,8 +344,10 @@ export const syncLog = sqliteTable(
 // at apply time rather than a static column def) would make the next
 // `drizzle-kit generate` emit duplicate CREATE TABLEs off snapshot 0006.
 // Reconcile the snapshot chain first if either ever moves in. Their writes
-// deliberately bypass drizzle regardless: vec0's key affinity rejects the
-// plain JS-number params drizzle's typed inserts emit (BigInt-coerced binds
-// pass — probe 2026-11-05), so SQL literals are load-bearing, not legacy —
-// see core/semantic.ts insertVecRow and commands/semantic.ts
-// ensureEmbeddingMeta.
+// bypass drizzle regardless: vec0 type-checks each incoming value, and
+// PK/PARTITION columns reject the plain JS-number params drizzle's typed
+// inserts emit — BigInt-coerced binds or sql.raw() fragment values work
+// (probe 2026-11-05) but with these tables untypeable here, either is the
+// same SQL through more ceremony, not more safety. SQL literals are
+// load-bearing, not legacy — see core/semantic.ts insertVecRow and
+// commands/semantic.ts ensureEmbeddingMeta.
