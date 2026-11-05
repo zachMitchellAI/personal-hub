@@ -7,14 +7,17 @@
 // token scoring; no FTS5 by ticket).
 //
 // vec0 insert quirks (re-probed 2026-11-05 against sqlite-vec 0.1.9 +
-// node:sqlite, PR #1 review r4483148225): plain JS-number `?` binds reach
-// vec0's strict key affinity as FLOAT, so the PK and PARTITION KEY reject
-// parameterized inserts — vector rows go through core/semantic.ts
-// insertVecRow (SQL literals). BigInt-coerced binds do land as INTEGER,
-// but drizzle's typed inserts emit plain JS numbers, so drizzle cannot
-// drive vec0 writes here (performance is a non-issue — same connection,
-// same statement shape; binding affinity is the gate). KNN queries select
-// the named key column, never rowid.
+// node:sqlite, PR #1 review r4483148225): vec0 type-checks each incoming
+// value per column — the PK and PARTITION KEY must arrive as SQLITE_INTEGER.
+// Plain JS-number `?` binds reach them as FLOAT through node:sqlite, so
+// parameterized inserts fail, and vector rows go through core/semantic.ts
+// insertVecRow (SQL literals). drizzle's typed inserts emit plain JS
+// numbers and fail the same way; its sql.raw() fragment values DO work
+// (inline literals — verified end to end) but the virtual table cannot
+// join schema.ts (see the S13 note there: virtual DDL, config-token width,
+// snapshot hazard), so the sql.raw form would be this same SQL behind
+// extra ceremony. Performance is a non-issue; value typing is the gate.
+// KNN queries select the named key column, never rowid.
 import { makeDrizzle, openDb } from '../core/db.ts';
 import { interactions, people } from '../schema.ts';
 import { parseIsoDate } from '../core/util.ts';
