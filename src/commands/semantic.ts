@@ -6,10 +6,15 @@
 // repairs the index. Keyword mode is the contrast/fallback path (LIKE-style
 // token scoring; no FTS5 by ticket).
 //
-// The vec0 quirks from the demo (demo/semantic/README.md) apply here:
-// vec0 INSERTs need SQL literals for the primary key (bound params are
-// rejected), so vector rows go through core/semantic.ts insertVecRow; KNN
-// queries select the named key column, never rowid.
+// vec0 insert quirks (re-probed 2026-11-05 against sqlite-vec 0.1.9 +
+// node:sqlite, PR #1 review r4483148225): plain JS-number `?` binds reach
+// vec0's strict key affinity as FLOAT, so the PK and PARTITION KEY reject
+// parameterized inserts — vector rows go through core/semantic.ts
+// insertVecRow (SQL literals). BigInt-coerced binds do land as INTEGER,
+// but drizzle's typed inserts emit plain JS numbers, so drizzle cannot
+// drive vec0 writes here (performance is a non-issue — same connection,
+// same statement shape; binding affinity is the gate). KNN queries select
+// the named key column, never rowid.
 import { makeDrizzle, openDb } from '../core/db.ts';
 import { interactions, people } from '../schema.ts';
 import { parseIsoDate } from '../core/util.ts';
