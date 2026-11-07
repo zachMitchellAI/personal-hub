@@ -21,6 +21,17 @@
 ### D1: SQLite is the core
 One file, WAL mode. Portable = copy one file. Standard-ish fields (vCard-compatible contact fields) so export to anything stays trivial. Don't wait for Odoo v3/Monica MCP — an export path costs almost nothing if the schema stays clean.
 
+### D1.5: Dependencies on purpose, not by default (2026-10-31)
+Original S1 rule was "zero npm runtime deps" — an agent default, not an owner
+requirement; it was rewritten (owner-approved) into a decision gate: prefer
+`node:` built-ins for tiny problems; pure-JS deps that earn their place get
+added with a one-line why here; native/platform-binary deps are surfaced to
+the owner before adding. Approved so far:
+- `drizzle-orm` — typed SQL over node:sqlite (pure JS).
+- `sqlite-vec` — vec0 extension loader + platform binaries (native;
+  owner-approved 2026-10-31 replacing the OpenClaw-install .so path hack,
+  which broke on nvm upgrades and other machines).
+
 ### D2: The capability layer is a CLI, not "the model figures it out"
 `hub` — a small deterministic command-line tool. Writes go through it; freeform SQL is allowed read-only (exploration) but never the write path. Reasons: schema drift guardrails, reviewable/repeatable, and it's the true portability contract — OpenClaw calls it via exec, opencode calls it via shell, cron calls it, the netbook calls it over SSH, and a future MCP wrapper just exposes the same verbs.
 

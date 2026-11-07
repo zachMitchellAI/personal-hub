@@ -75,6 +75,8 @@ const ALL_VERBS = [
   'import-vcf',
   'log-sync',
   'list-sync-log',
+  'search',
+  'reindex-embeddings',
   'edit-person',
   'edit-channel',
   'edit-task',

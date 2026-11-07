@@ -30,6 +30,7 @@ import {
 import { cmdAddFile, cmdListFiles } from './commands/files.ts';
 import { cmdImportVcf } from './commands/import-vcf.ts';
 import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
+import { cmdReindexEmbeddings, cmdSearch } from './commands/semantic.ts';
 import {
   cmdAddTrackable,
   cmdAddTrackableEvent,
@@ -102,4 +103,7 @@ export const VERBS: Record<string, VerbHandler> = {
   'merge-person': cmdMergePerson,
   'log-sync': cmdLogSync,
   'list-sync-log': cmdListSyncLog,
+  // S13 — semantic search (hybrid: SQL prefilter → vector rank).
+  search: cmdSearch,
+  'reindex-embeddings': cmdReindexEmbeddings,
 };
