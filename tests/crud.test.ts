@@ -519,10 +519,7 @@ test('S12: merge-person handles the husk case (empty person, one dangling intera
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.deepEqual(out.moved, { channels: 0, interactions: 1, files: 0, tasks: 0, links: 0 });
-  assert.equal(
-    rawRows(dbPath, `SELECT COUNT(*) AS n FROM people WHERE slug = '${P0.slug}-husk'`)[0].n,
-    0,
-  );
+  assert.equal(rawRows(dbPath, `SELECT COUNT(*) AS n FROM people WHERE slug = '${P0.slug}-husk'`)[0].n, 0);
   assert.equal(
     rawRows(dbPath, "SELECT COUNT(*) AS n FROM interactions WHERE summary = 'old thread' AND person_id = 1")[0].n,
     1,

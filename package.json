@@ -15,7 +15,8 @@
     "node": ">=24"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
     "@types/node": "^24",

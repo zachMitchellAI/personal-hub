@@ -398,20 +398,28 @@ test('S8: EXPLAIN QUERY PLAN on slug lookup uses people_slug_unique — no full 
   }
 });
 
-// Extra contract — fresh init lands at user_version 7 (…+ 007_indexes_views),
-// both views exist, and every S8 index exists by name.
-test('S8: fresh init lands at user_version 7 with the S8 indexes and views', (t) => {
+// Extra contract — fresh init lands at the latest migration (…+ 007_indexes_views;
+// user_version rises above 7 only on vec0-capable machines, where S13's 009 also
+// applies — asserted loosely so the suite stays green without the .so), both
+// views exist, and every S8 index exists by name.
+test('S8: fresh init lands at user_version 7+ with the S8 indexes and views', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = { HUB_DB: join(tmp, 'life.db') };
   const init = runCli(['init', '--json'], env);
   assert.equal(init.status, 0, init.stderr);
-  assert.deepEqual(JSON.parse(init.stdout).migrations_applied, [1, 2, 3, 4, 5, 6, 7]);
+  const applied = JSON.parse(init.stdout).migrations_applied as number[];
+  assert.deepEqual(applied.slice(0, 7), [1, 2, 3, 4, 5, 6, 7], 'S1–S8 migrations must apply in order');
+  // 009 (S13) is extension-gated: it applies only when vec0.so is loadable, so
+  // assert it conditionally instead of pinning the machine's capability here.
+  if (applied.includes(9)) assert.ok(applied.at(-1) === 9, '009 must be the last applied migration');
 
   const db = new DatabaseSync(join(tmp, 'life.db'));
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 7, 'fresh init with real migrations must land at user_version 7');
+    assert.ok(uv.user_version >= 7, 'fresh init with real migrations must land at user_version >= 7');
+    // Consistency: the applied list must match the landed user_version.
+    assert.equal(uv.user_version, applied.at(-1));
 
     const objects = db
       .prepare("SELECT name, type FROM sqlite_master WHERE type IN ('index','view') ORDER BY name")

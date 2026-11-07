@@ -6,9 +6,21 @@ architecture and `BUILD-STATE.md` for what exists and why — this file is about
 
 ## Hard constraints (non-negotiable)
 
-1. **Zero npm runtime dependencies.** `drizzle-orm` is the sole exception
-   (pure JS, no native code). Do not add packages to fix problems — solve them
-   with `node:` built-ins or plain TypeScript. `drizzle-kit` is dev-only.
+1. **Dependencies on purpose, not by default.** Before adding any npm
+   dependency:
+   - *Prefer* solving small problems (roughly <50 lines total) with `node:`
+     built-ins — a dependency for that is negative value.
+   - Pure-JS dependencies that earn their place (real maintenance, real fit):
+     evaluate and add; note the why in the repo docs.
+   - Native/platform-binary dependencies: run the evaluation and surface it
+     to the owner before adding — supply-chain and platform compat are
+     owner-visible tradeoffs.
+   - Never add to fix a symptom; fix the actual problem, or don't add.
+   Approved exceptions so far: `drizzle-orm` (typed SQL over node:sqlite,
+   pure JS) and `sqlite-vec` (vec0 extension loader + platform binaries,
+   native — owner-approved 2026-10-31, replacing the OpenClaw-install .so
+   path hack that was not portable). `drizzle-kit`, dev tooling, and test
+   helpers are dev-only and never imported by `src/`.
 2. **No build step.** Node ≥24 executes `.ts` directly by stripping types.
    Consequences:
    - **Erasable syntax only**: no TypeScript `enum`, `namespace`, or parameter

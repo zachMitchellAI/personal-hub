@@ -59,6 +59,10 @@ export const PARSE_ARGS_OPTIONS = {
   adapter: { type: 'string' },
   // S8b import flags.
   'dry-run': { type: 'boolean', default: false },
+  // S13 semantic-search flags (since already declared for list-interactions).
+  k: { type: 'string' },
+  mode: { type: 'string' },
+  force: { type: 'boolean', default: false },
   // S12 merge-person: target slug (the surviving row).
   into: { type: 'string' },
 } as const;
@@ -98,6 +102,9 @@ export const VERB_NAMES = [
   'import-vcf',
   'log-sync',
   'list-sync-log',
+  // S13 — semantic search.
+  'search',
+  'reindex-embeddings',
   // S12 — CRUD verbs (partial edits, hard deletes, person merge).
   'edit-person',
   'edit-channel',
@@ -155,6 +162,9 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   'merge-person': ['into'],
   'log-sync': ['entity', 'entity-id', 'action', 'direction', 'adapter', 'detail'],
   'list-sync-log': ['adapter', 'direction', 'entity'],
+  // S13 — semantic search.
+  search: ['person', 'since', 'k', 'mode'],
+  'reindex-embeddings': ['force'],
 };
 
 /**

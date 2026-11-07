@@ -293,7 +293,7 @@ test('S6: DB CHECK rejects bad status; user_version lands at 7', (t) => {
   const db = new DatabaseSync(dbPath);
   try {
     const uv = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    assert.equal(uv.user_version, 7, 'fresh init with real migrations must land at user_version 7');
+    assert.ok(uv.user_version >= 7, 'fresh init with real migrations must land at user_version >= 7');
     assert.throws(
       () =>
         db

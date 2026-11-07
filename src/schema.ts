@@ -334,3 +334,20 @@ export const syncLog = sqliteTable(
     unique('sync_log_idempotency').on(table.adapter, table.direction, table.entity, table.entityId, table.action),
   ],
 );
+
+// S13 — semantic-search tables are deliberately NOT declared here. Migration
+// 009 was hand-authored (outside the drizzle-kit snapshot chain — the journal
+// ends at 007_indexes_views), so declaring
+// `embedding_meta` (a plain table from 009) or mirroring
+// `interaction_embeddings` (a vec0 virtual table drizzle-kit cannot express:
+// extension DDL, with the vector width token-substituted from HUB_EMBED_DIM
+// at apply time rather than a static column def) would make the next
+// `drizzle-kit generate` emit duplicate CREATE TABLEs off snapshot 0006.
+// Reconcile the snapshot chain first if either ever moves in. Their writes
+// bypass drizzle regardless: vec0 type-checks each incoming value, and
+// PK/PARTITION columns reject the plain JS-number params drizzle's typed
+// inserts emit — BigInt-coerced binds or sql.raw() fragment values work
+// (probe 2026-11-05) but with these tables untypeable here, either is the
+// same SQL through more ceremony, not more safety. SQL literals are
+// load-bearing, not legacy — see core/semantic.ts insertVecRow and
+// commands/semantic.ts ensureEmbeddingMeta.
