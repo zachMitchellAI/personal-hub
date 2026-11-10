@@ -412,7 +412,7 @@ test('S8: fresh init lands at user_version 7+ with the S8 indexes and views', (t
   assert.deepEqual(applied.slice(0, 7), [1, 2, 3, 4, 5, 6, 7], 'S1–S8 migrations must apply in order');
   // 009 (S13) is extension-gated: it applies only when vec0.so is loadable, so
   // assert it conditionally instead of pinning the machine's capability here.
-  if (applied.includes(9)) assert.ok(applied.at(-1) === 9, '009 must be the last applied migration');
+  if (applied.includes(9)) assert.ok(applied.at(-1) === 10, 'with 009 applied, 010 must land last');
 
   const db = new DatabaseSync(join(tmp, 'life.db'));
   try {

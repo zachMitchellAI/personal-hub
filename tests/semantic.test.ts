@@ -153,7 +153,7 @@ test(
     assert.equal(init.status, 0, init.stderr);
     const status = JSON.parse(init.stdout);
     assert.ok(status.migrations_applied.includes(9), '009_semantic_search must apply');
-    assert.equal(status.user_version, 9);
+    assert.equal(status.user_version, 10);
 
     // The singleton is only seeded on first vector write, not at migration
     // time — so this scenario writes one interaction, then inspects. Open the
@@ -495,7 +495,7 @@ test('S13: vec0-absent degrades to keyword search, exit 0', (t) => {
   assert.equal(init.status, 0, init.stderr);
   const initOut = JSON.parse(init.stdout);
   assert.ok(!initOut.migrations_applied.includes(9), '009 must be skipped without vec0');
-  assert.equal(initOut.user_version, 7);
+  assert.equal(initOut.user_version, 10);
 
   assert.equal(runCli(['add-person', '--name', 'Dana Reyes'], noVec).status, 0);
   // vec0 absent AND Ollama dead: the add must still succeed, silently

@@ -351,3 +351,32 @@ export const syncLog = sqliteTable(
 // same SQL through more ceremony, not more safety. SQL literals are
 // load-bearing, not legacy — see core/semantic.ts insertVecRow and
 // commands/semantic.ts ensureEmbeddingMeta.
+
+// S11 — task_trello: the hub↔card mapping for the one-way Trello mirror
+// (DECISIONS #13: hub is the source of truth; Trello is an interface).
+// One task maps to at most one card — task_id as PRIMARY KEY encodes that
+// invariant without a separate constraint. The card_id UNIQUE index guards
+// against double-mapping: if two tasks ever claim the same card (stale
+// config swap, manual retag), that surfaces as a reported sync conflict,
+// not a silent overwrite. card_id is TEXT because it is a 24-hex-char
+// Trello id, not a hub surrogate key. State columns (title/due/status) are
+// deliberately absent — card state is derivable from the task row + config
+// at sync time; synced_at is bookkeeping for humans, not logic. Mapping
+// rows cascade on task deletion (the card gets archived by the sync flow,
+// never deleted).
+export const taskTrello = sqliteTable(
+  'task_trello',
+  {
+    /** The hub task this mirror card represents — one row per task, ever. */
+    taskId: integer('task_id')
+      .primaryKey({ autoIncrement: false })
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    /** The Trello card id (24-hex chars) — UNIQUE: a card belongs to one task. */
+    cardId: text('card_id').notNull(),
+    /** CLI-set ISO timestamp of when the mapping was first created. */
+    createdAt: text('created_at').notNull(),
+    /** CLI-set ISO timestamp of the last confirmed sync touching this mapping. */
+    syncedAt: text('synced_at').notNull(),
+  },
+  (table) => [unique('task_trello_card_unique').on(table.cardId)],
+);

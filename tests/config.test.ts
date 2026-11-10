@@ -113,7 +113,7 @@ test('S13 cfg: vec0-absent machine still skips 009 cleanly with custom dim set',
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);
     assert.ok(!out.migrations_applied.includes(9), '009 must skip with a dead vec0 override');
-    assert.equal(out.user_version, 7);
+    assert.equal(out.user_version, 10);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
