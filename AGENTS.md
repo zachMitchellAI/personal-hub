@@ -4,6 +4,27 @@ Standards for any agent (or human) working in this repo. Read the repo docs for
 architecture and `BUILD-STATE.md` for what exists and why — this file is about
 *how to change it*, not what it is.
 
+## Naming (added 2026-11-11, owner review rule)
+
+- **No single-letter variable or parameter names.** Every identifier states
+  what it holds: `card`, `row`, `match` — never `c`, `r`, `m`. Applies to src
+  and tests alike. Single letters make diffs (and agents) re-derive meaning
+  that the name could have carried for free.
+- **Exports live at the bottom.** Helpers above, public surface below — so a
+  reader (or agent) scanning a file sees the helpers first and the module's
+  entry points last, and can tell them apart at a glance. Exports in the
+  middle of a file blur helpers with main content (owner rule, 2026-11-11).
+
+## Code structure (added 2026-11-11, owner review rule)
+
+- **Size functions to their meaning, not a line count.** A long multi-step
+  function gets decomposed into flat, meaning-named step functions
+  (`planSync` calling `planTaskCards`/`planAdoptions`/`planArchives`), with a
+  readable entry point on top. But don't over-split — each function should be
+  big enough to mean something alone (owner: "not overly tiny — this function
+  scoping is just right", post-decompose of cmdSyncTrello). Nesting
+  step-functions inside each other is explicitly avoided.
+
 ## Hard constraints (non-negotiable)
 
 1. **Dependencies on purpose, not by default.** Before adding any npm

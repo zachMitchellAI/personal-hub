@@ -83,6 +83,9 @@ const ALL_VERBS = [
   'delete-task',
   'delete-entity',
   'merge-person',
+  // S11 — Trello adapter (config surface + the one-way sync flow).
+  'trello-config',
+  'sync-trello',
 ];
 
 const ADD_VERBS = ALL_VERBS.filter((v) => v.startsWith('add-'));

@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { latestNonGatedMigrationVersion } from './helpers.ts';
 
 const HUB = join(import.meta.dirname, '..', 'src', 'hub.ts');
 const CONFIG = join(import.meta.dirname, '..', 'src', 'core', 'config.ts');
@@ -113,7 +114,8 @@ test('S13 cfg: vec0-absent machine still skips 009 cleanly with custom dim set',
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);
     assert.ok(!out.migrations_applied.includes(9), '009 must skip with a dead vec0 override');
-    assert.equal(out.user_version, 7);
+    assert.equal(out.user_version, latestNonGatedMigrationVersion());
+    // note: derived from src/migrations filenames (tests/helpers.ts) — no per-branch bump
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

@@ -30,6 +30,8 @@ import {
 import { cmdAddFile, cmdListFiles } from './commands/files.ts';
 import { cmdImportVcf } from './commands/import-vcf.ts';
 import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
+import { cmdTrelloConfig } from './commands/trello/trello-config.ts';
+import { cmdSyncTrello } from './commands/trello/sync-trello.ts';
 import { cmdReindexEmbeddings, cmdSearch } from './commands/semantic.ts';
 import {
   cmdAddTrackable,
@@ -103,6 +105,9 @@ export const VERBS: Record<string, VerbHandler> = {
   'merge-person': cmdMergePerson,
   'log-sync': cmdLogSync,
   'list-sync-log': cmdListSyncLog,
+  // S11 — Trello adapter: config surface + the one-way sync flow.
+  'trello-config': cmdTrelloConfig,
+  'sync-trello': cmdSyncTrello,
   // S13 — semantic search (hybrid: SQL prefilter → vector rank).
   search: cmdSearch,
   'reindex-embeddings': cmdReindexEmbeddings,

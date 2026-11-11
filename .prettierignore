@@ -1,3 +1,5 @@
 node_modules
 package-lock.json
 vcards_*.vcf
+src/migrations/meta
+

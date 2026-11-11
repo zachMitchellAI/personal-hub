@@ -50,6 +50,20 @@
       "when": 1792683722796,
       "tag": "0006_indexes_views",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792781703354,
+      "tag": "0007_task_trello",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794614400000,
+      "tag": "0010_task_trello_renumbered",
+      "breakpoints": true
     }
   ]
 }

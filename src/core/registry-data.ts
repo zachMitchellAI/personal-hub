@@ -65,6 +65,15 @@ export const PARSE_ARGS_OPTIONS = {
   force: { type: 'boolean', default: false },
   // S12 merge-person: target slug (the surviving row).
   into: { type: 'string' },
+  // S11 trello-config: the config block flags (all optional — merge semantics).
+  board: { type: 'string' },
+  'list-ready': { type: 'string' },
+  'list-in-progress': { type: 'string' },
+  'list-done': { type: 'string' },
+  'engine-path': { type: 'string' },
+  // S11 sync-trello: execute (default is dry-run); skip warming the engine cache.
+  apply: { type: 'boolean', default: false },
+  'skip-cache-sync': { type: 'boolean', default: false },
 } as const;
 
 /** Verb names only — the data-only mirror of the VERBS map's key order. */
@@ -112,6 +121,9 @@ export const VERB_NAMES = [
   'delete-task',
   'delete-entity',
   'merge-person',
+  // S11 — Trello adapter (config surface + the one-way sync flow).
+  'trello-config',
+  'sync-trello',
 ] as const;
 
 /**
@@ -162,6 +174,9 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   'merge-person': ['into'],
   'log-sync': ['entity', 'entity-id', 'action', 'direction', 'adapter', 'detail'],
   'list-sync-log': ['adapter', 'direction', 'entity'],
+  // S11 — Trello adapter.
+  'trello-config': ['board', 'list-ready', 'list-in-progress', 'list-done', 'engine-path'],
+  'sync-trello': ['apply', 'skip-cache-sync'],
   // S13 — semantic search.
   search: ['person', 'since', 'k', 'mode'],
   'reindex-embeddings': ['force'],
