@@ -120,14 +120,17 @@ function describeDrift(
   if (card.name !== expectedTitle) updates.push('title');
   if (card.description !== (task.notes ?? '')) updates.push('description');
   if ((card.due ?? '') !== (task.dueDate ?? '')) updates.push('due');
+
   const targetList = STATUS_TO_LIST[task.status];
   const moves: string[] = [];
 
   if (targetList && list !== targetList) moves.push(`list → ${targetList}`);
   if (updates.length === 0 && moves.length === 0) return null;
+
   const parts: string[] = [];
   if (updates.length) parts.push(`update ${updates.join(', ')}`);
   if (moves.length) parts.push(`move ${moves.join(', ')}`);
+
   return {
     updates: {
       action: 'update',
