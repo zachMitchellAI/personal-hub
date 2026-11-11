@@ -416,7 +416,9 @@ export async function cmdMarkSubtask(values: MarkSubtaskValues, idArg?: string):
  * deterministic-ISO rule as add-task (fuzzy dates never parse); `--person`
  * re-points the person FK by slug (unknown slug = usage error, resolved
  * BEFORE the update). status/completed_at are set-task-status's job and are
- * not editable here.
+ * not editable here. `--trello-visible` flips the task onto the Trello
+ * mirror (trello_visible=1); the flag is one-way here — set-task-status and
+ * the S11 sync manage the rest of the mirror lifecycle.
  * @param values - Parsed CLI flags; at least one task field required.
  * @param idArg - First positional argument: the task id.
  * @returns Process exit code (0 = updated, 1 = usage/unknown id/slug).
@@ -443,6 +445,10 @@ export async function cmdEditTask(values: CliValues, idArg?: string): Promise<nu
     set.dueDate = iso;
   }
 
+  // One-way mirror flag: present ⇒ visible to the Trello mirror. Absent ⇒
+  // untouched (edit-task never un-mirrors; that's the sync/archive's job).
+  if (values['trello-visible'] === true) set.trelloVisible = 1;
+
   const { db } = openDb(values.db as string | undefined);
   try {
     const hub = makeDrizzle(db);
@@ -463,7 +469,9 @@ export async function cmdEditTask(values: CliValues, idArg?: string): Promise<nu
     }
 
     if (Object.keys(set).length === 0) {
-      console.error('hub edit-task: nothing to update — provide --title --context --due-date --notes --person');
+      console.error(
+        'hub edit-task: nothing to update — provide --title --context --due-date --notes --person --trello-visible',
+      );
       return 1;
     }
 

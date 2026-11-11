@@ -805,6 +805,10 @@ export interface EditTaskValues extends CliValues {
   /** Re-points the person FK by slug; resolved before the update. */
   person?: string;
   notes?: string;
+  /** Flag (S11 follow-up): mark the task visible to the Trello mirror
+   * (trello_visible=1). Present ⇒ 1; absent ⇒ unchanged (add-task defaults
+   * to 0, edit-task only ever turns it ON via this verb). */
+  'trello-visible'?: boolean;
 }
 
 /** Flags consumed by `hub merge-person`. `into` is required at runtime. */
