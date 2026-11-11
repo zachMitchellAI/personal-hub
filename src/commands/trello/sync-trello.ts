@@ -70,6 +70,24 @@ function completeTrelloConfig(cfg: HubJsonConfig): { trello: TrelloConfig } | { 
 }
 
 /**
+ * Compare a live card due (engine may return a full ISO timestamp, e.g.
+ * "2026-11-17T12:00:00.000Z") against a hub task's calendar due date
+ * ("2026-11-17"). Due drift is judged on the CALENDAR DAY only — a timestamp
+ * suffix or a different time-of-day is what the engine stores, not hub-visible
+ * drift. Null/empty on either side matches the other's null/empty. (Live bug
+ * found in the first real sync of PR #2: raw equality kept reporting phantom
+ * "update due" drift on every run — owner watching, 2026-11-11.)
+ * @param cardDue - The live card's due value (timestamp or calendar date).
+ * @param taskDue - The hub task's due_date (YYYY-MM-DD or null).
+ * @returns True when the two mean the same (or absent) day.
+ */
+export function dueMatchesCalendar(cardDue: string | null | undefined, taskDue: string | null | undefined): boolean {
+  const cardDay = (cardDue ?? '').slice(0, 10);
+  return cardDay === (taskDue ?? '');
+}
+
+/**
+ * Describe the drift between a mirrored task and its live card, as the
  * Describe the drift between a mirrored task and its live card, as the
  * (update | move) parts of a reconcile action — or null when in sync.
  * Due dates compare as CALENDAR dates (ticket: "due compared as calendar
@@ -88,7 +106,7 @@ function describeDrift(
 
   if (card.name !== expectedTitle) updates.push('title');
   if (card.description !== (task.notes ?? '')) updates.push('description');
-  if ((card.due ?? '') !== (task.dueDate ?? '')) updates.push('due');
+  if (!dueMatchesCalendar(card.due, task.dueDate)) updates.push('due');
 
   const targetList = STATUS_TO_LIST[task.status];
   const moves: string[] = [];
@@ -470,7 +488,7 @@ async function applyPlan(
           const patch: { name?: string; description?: string; due?: string | null } = {};
           if (card.name !== expectedTitle) patch.name = expectedTitle;
           if (card.description !== (task.notes ?? '')) patch.description = task.notes ?? '';
-          if ((card.due ?? '') !== (task.dueDate ?? '')) patch.due = task.dueDate;
+          if (!dueMatchesCalendar(card.due, task.dueDate)) patch.due = task.dueDate;
           if (Object.keys(patch).length) await engine.updateCard(card.id, patch);
           break;
         }
