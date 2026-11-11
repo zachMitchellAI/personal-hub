@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import { dueMatchesCalendar } from '../src/commands/trello/sync-trello.ts';
+
 const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
 const STUB_SRC = join(import.meta.dirname, 'stub-trello.mjs');
 
@@ -506,4 +508,15 @@ test('S11 sync: --json plan and apply shapes carry actions + logged rows', (t) =
     applyOut.logged.map((l) => l.action),
     ['create'],
   );
+});
+
+test('S11 drift: engine timestamp due never reads as calendar-day drift', () => {
+  // The engine stores Trello-side dues as ISO timestamps; the hub's due_date
+  // is a calendar date. Raw equality reported phantom "update due" forever
+  // (found in the first real sync, owner watching 2026-11-11).
+  assert.equal(dueMatchesCalendar('2026-11-17T12:00:00.000Z', '2026-11-17'), true);
+  assert.equal(dueMatchesCalendar(null, '2026-11-17'), false);
+  assert.equal(dueMatchesCalendar('2026-11-17T12:00:00.000Z', null), false);
+  assert.equal(dueMatchesCalendar(null, null), true);
+  assert.equal(dueMatchesCalendar('2026-11-18T12:00:00.000Z', '2026-11-17'), false);
 });
