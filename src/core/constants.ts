@@ -289,8 +289,9 @@ edit-channel <id> [--kind <k>] [--value <v>]
   editable here (set-primary owns the primary transaction).
 edit-task <id> [flags]
   Partial update on a task: --title --context --due-date --notes
-  --person <slug>. due-date must be a deterministic ISO date (YYYY-MM-DD);
-  --person resolves by slug and re-points the FK.
+  --person <slug> [--trello-visible]. due-date must be a deterministic ISO
+  date (YYYY-MM-DD); --person resolves by slug and re-points the FK.
+  --trello-visible flips the task onto the Trello mirror (one-way here).
 delete-task <id>
   Hard delete a task. Subtasks cascade.
 delete-entity <slug>

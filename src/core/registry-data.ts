@@ -168,7 +168,7 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   // S12 — CRUD verbs. merge-person takes the from-slug as its positional.
   'edit-person': ['name', 'first-name', 'last-name', 'relationship-type', 'employer', 'notes'],
   'edit-channel': ['kind', 'value'],
-  'edit-task': ['title', 'context', 'due-date', 'person', 'notes'],
+  'edit-task': ['title', 'context', 'due-date', 'person', 'notes', 'trello-visible'],
   'delete-task': [],
   'delete-entity': [],
   'merge-person': ['into'],

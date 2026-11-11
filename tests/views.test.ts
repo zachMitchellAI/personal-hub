@@ -414,7 +414,10 @@ test('S8: fresh init lands at user_version 7+ with the S8 indexes and views', (t
   // 009 (S13) is extension-gated: it applies only when vec0.so is loadable, so
   // assert it conditionally instead of pinning the machine's capability here.
   if (applied.includes(9))
-    assert.ok(applied.at(-1) === latestNonGatedMigrationVersion(), 'last applied must be the latest non-gated migration');
+    assert.ok(
+      applied.at(-1) === latestNonGatedMigrationVersion(),
+      'last applied must be the latest non-gated migration',
+    );
 
   const db = new DatabaseSync(join(tmp, 'life.db'));
   try {
