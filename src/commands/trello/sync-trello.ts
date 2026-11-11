@@ -87,16 +87,16 @@ interface OwnedCard {
  * @returns The complete trello block, or null with the field list missing.
  */
 function completeTrelloConfig(cfg: HubJsonConfig): { trello: TrelloConfig } | { missing: string[] } {
-  const t = cfg.trello;
+  const trello = cfg.trello;
   const missing: string[] = [];
-  if (!t) return { missing: ['--board', '--list-ready', '--list-in-progress', '--list-done'] };
-  if (!t.board) missing.push('--board');
-  if (!t.lists?.ready) missing.push('--list-ready');
-  if (!t.lists?.['in-progress']) missing.push('--list-in-progress');
-  if (!t.lists?.done) missing.push('--list-done');
+  if (!trello) return { missing: ['--board', '--list-ready', '--list-in-progress', '--list-done'] };
+  if (!trello.board) missing.push('--board');
+  if (!trello.lists?.ready) missing.push('--list-ready');
+  if (!trello.lists?.['in-progress']) missing.push('--list-in-progress');
+  if (!trello.lists?.done) missing.push('--list-done');
   if (missing.length) return { missing };
   return {
-    trello: { enginePath: t.enginePath || 'trello', board: t.board, lists: t.lists },
+    trello: { enginePath: trello.enginePath || 'trello', board: trello.board, lists: trello.lists },
   };
 }
 
@@ -116,11 +116,13 @@ function describeDrift(
 ): { updates: PlanAction; moves: PlanAction } | null {
   const expectedTitle = `[hub-${task.id}] ${task.title}`;
   const updates: string[] = [];
+
   if (card.name !== expectedTitle) updates.push('title');
   if (card.description !== (task.notes ?? '')) updates.push('description');
   if ((card.due ?? '') !== (task.dueDate ?? '')) updates.push('due');
   const targetList = STATUS_TO_LIST[task.status];
   const moves: string[] = [];
+
   if (targetList && list !== targetList) moves.push(`list → ${targetList}`);
   if (updates.length === 0 && moves.length === 0) return null;
   const parts: string[] = [];
@@ -239,8 +241,8 @@ export async function cmdSyncTrello(values: CliValues): Promise<number> {
         actions.push({
           action: 'conflict',
           taskId: hubId,
-          cardId: cards.map((c) => c.card.id).join('+'),
-          summary: `conflict: card(s) tagged [hub-${hubId}] also claimed by another task — nothing applied for them (${cards.map((c) => c.card.id).join(', ')})`,
+          cardId: cards.map((card) => card.card.id).join('+'),
+          summary: `conflict: card(s) tagged [hub-${hubId}] also claimed by another task — nothing applied for them (${cards.map((card) => card.card.id).join(', ')})`,
         });
       }
     }
@@ -292,7 +294,7 @@ export async function cmdSyncTrello(values: CliValues): Promise<number> {
       actions.push({
         action: 'conflict',
         taskId: task.id,
-        cardId: tagged.map((c) => c.card.id).join('+'),
+        cardId: tagged.map((card) => card.card.id).join('+'),
         summary: `conflict: [hub-${task.id}] matches ${tagged.length} live cards — nothing applied (dedupe manually)`,
       });
     }
