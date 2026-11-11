@@ -36,3 +36,14 @@ export function migrationsPath(): string {
 export function resolveFilesPath(): string {
   return process.env.HUB_FILES ?? join(homedir(), 'hub', 'files');
 }
+
+/**
+ * Resolve the hub JSON config file (S11): `$HUB_JSON_CONFIG` if set,
+ * otherwise `~/.hub/config.json` — the trello block's home, kept separate
+ * from the KEY=VALUE env file because its shape is a structured JSON object.
+ * @returns The JSON config path (not required to exist).
+ */
+export function hubJsonEnvConfigPath(): string {
+  if (process.env.HUB_JSON_CONFIG) return process.env.HUB_JSON_CONFIG;
+  return join(homedir(), '.hub', 'config.json');
+}

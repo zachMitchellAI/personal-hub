@@ -21,6 +21,13 @@ export const ENTITY_LINK_TARGETS = ['person', 'task', 'trackable', 'interaction'
 // a usage error rather than a permanently mislabelled ledger row.
 export const SYNC_DIRECTIONS = ['in', 'out'] as const;
 
+// Sync-log actions emitted by the S11 trello sync flow (hub sync-trello).
+// Same contract as above: free text in the DB, narrowed CLI-side.
+export const SYNC_ACTIONS = ['create', 'update', 'move', 'archive', 'adopt', 'conflict'] as const;
+
+/** The trello-cli command the engine spawns when config carries no override. */
+export const ENGINE_DEFAULT_PATH = 'trello';
+
 // Help text. A plain constant (not a tagged template function): it is read
 // exactly once per process, and VERSION lives in this same file, so direct
 // interpolation is the zero-indirection shape.
@@ -250,6 +257,20 @@ reindex-embeddings options:
   --force                  Re-embed ALL interactions (e.g. after a model swap;
                            vectors from different models are never mixed)
 
+trello-config options:
+  --board <id>             The mirror board (Trello id or name) — required
+                           on first run; kept on partial invocations
+  --list-ready <id>        The list mirrored from status "ready"
+  --list-in-progress <id>  The list mirrored from status "in-progress"
+  --list-done <id>         The list completed tasks move through before
+                           archiving
+  --engine-path <cmd>      trello-cli command to spawn (default "trello")
+
+sync-trello options:
+  --apply                  Execute the plan (default dry-run: plan only)
+  --skip-cache-sync        Skip the trello sync cache warm-up before
+                           listing cards
+
 import-vcf <file.vcf> [--dry-run]
   Import contacts from a vCard 2.1 file. FN/N → display_name + derived slug
   (add-person rules); TEL → phone channels, EMAIL → email channels; ORG →
@@ -279,6 +300,25 @@ merge-person <from-slug> --into <into-slug>
   tasks, and person-targeted links MOVE to the target, then the from-row
   is deleted — all in one transaction. Refuses from==into and unknown slugs.
 
+trello-config [--board <id>] [--list-ready <id>] [--list-in-progress <id>]
+              [--list-done <id>] [--engine-path <cmd>]
+  Write/merge the trello block of the hub config file (~/.hub/config.json,
+  $HUB_CONFIG-overridable). Offline — no engine call, no network. Merge
+  semantics: only provided flags change fields; existing values (board,
+  list ids, engine path) are kept on a partial invocation. Board/list
+  values may be Trello ids (recommended — stable under renames) or list
+  names resolved through the engine cache. Credentials stay OUT of this
+  file: trello-cli reads TRELLO_API_KEY/TRELLO_TOKEN from the environment.
+sync-trello [--apply] [--skip-cache-sync]
+  One-way sync hub → Trello (DECISIONS #13). Compares the mirror set
+  (list-tasks --mirror rows) against the live cards of the configured
+  board's three lists and creates / updates / moves / archives cards to
+  match — cards tagged [hub-<task-id>] belong to the hub, untagged cards
+  are never touched. Default is a DRY-RUN: the plan prints, nothing
+  changes. --apply executes each planned action and writes one sync_log
+  row per action (direction out, adapter trello-cli). trello sync runs
+  first to warm the engine cache unless --skip-cache-sync is given.
+
 Environment:
   HUB_DB           Default database path
   HUB_FILES        Durable files root (default: ~/hub/files)
@@ -292,4 +332,9 @@ Environment:
   HUB_CONFIG       Config-file override (default: $XDG_CONFIG_HOME/hub/env,
                    else ~/.config/hub/env) — flat KEY=VALUE lines; any HUB_*
                    setting above may live there instead of the environment
-  HUB_DEBUG        Set to print embedding-failure details on stderr`;
+  HUB_DEBUG        Set to print embedding-failure details on stderr
+
+  The S11 verbs read ONE more path through --engine-path/hub trello-config:
+  the trello block of ~/.hub/config.json (same $HUB_CONFIG override,
+  JSON format — see the trello-config verb above).
+`;

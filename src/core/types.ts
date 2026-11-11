@@ -858,3 +858,21 @@ export interface MergePersonStatus {
   into_id: number;
   moved: MergePersonMoved;
 }
+
+// ─── S11 — Trello adapter verbs (stories/ticket-s11-trello-adapter.md) ─────
+
+/** The trello block of the hub config file (full shape in core/config.ts). */
+export interface TrelloConfigStatusBlock {
+  enginePath: string;
+  board: string;
+  lists: { ready: string; 'in-progress': string; done: string };
+}
+
+/** `hub trello-config --json` result: the merged trello block, echoed. */
+export interface TrelloConfigStatus {
+  verb: 'trello-config';
+  /** The block as now stored (existing values merged with the new flags). */
+  trello: TrelloConfigStatusBlock;
+  /** Which fields THIS invocation actually set (the merge audit line). */
+  updated_fields: string[];
+}

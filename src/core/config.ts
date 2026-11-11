@@ -17,11 +17,12 @@
 // hold the fail-loudly contract. File syntax stays flat KEY=VALUE: canonical
 // details (inline comments, quoted '#', `export` prefixes) are supported;
 // multi-line values are not, and errors name the offending line.
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import process from 'node:process';
 import { parseEnv } from 'node:util';
+import { hubJsonEnvConfigPath } from './paths.ts';
 
 /**
  * The hub config file path: `$HUB_CONFIG` when set, otherwise
@@ -157,4 +158,82 @@ export function semanticConfig(): SemanticConfig {
     ollama: hubEnv('HUB_OLLAMA') ?? SEMANTIC_DEFAULTS.ollama,
     ...(vec0So !== undefined ? { vec0So } : {}),
   };
+}
+
+// ─── S11 — the hub JSON config file (~/.hub/config.json) ────────────────────
+// A separate config surface from the KEY=VALUE env file: the trello block is
+// STRUCTURED (board id + three list ids), and JSON preserves that shape
+// losslessly. Precedence rule from S13 carries over: process-env override
+// (HUB_CONFIG) picks the file's location — the VALUES stay file-only, because
+// a JSON document is not representable in single environment variables.
+// Credentials are deliberately NOT here (S11 ticket): the trello engine reads
+// TRELLO_API_KEY/TRELLO_TOKEN from the environment at spawn time; the hub
+// only inherits env, never reads or stores credential values.
+
+/** The trello block of the hub config file (S11 ticket's canonical shape). */
+export interface TrelloConfig {
+  /** Engine command to spawn (default "trello"; resolvable on PATH). */
+  enginePath: string;
+  /** The mirror board: Trello id (recommended) or name (cache-resolved). */
+  board: string;
+  /** Status → list mapping; keys are the TASK_STATUSES-mapped list roles. */
+  lists: { ready: string; 'in-progress': string; done: string };
+}
+
+/** Shape of the whole hub config file. New top-level keys merge alongside. */
+export interface HubJsonConfig {
+  trello?: TrelloConfig;
+  /** Unrecognized top-level keys are preserved verbatim (merge contract). */
+  [key: string]: unknown;
+}
+
+/** The hub JSON config file path (S11): `$HUB_CONFIG` when set, else
+ * `~/.hub/config.json`. Resolution lives in core/paths.ts next to the other
+ * env-driven resolvers; this re-export keeps config.ts the single import
+ * surface for everything configuration-shaped. */
+export { hubJsonEnvConfigPath };
+
+/**
+ * Load the hub JSON config file. Missing file → {} (first-run contract:
+ * `trello-config` must work from nothing). A file that exists but does not
+ * parse as a JSON object throws — a typo'd config must fail loudly, the same
+ * fail-loudly posture as parseEnvFile above. Arrays/strings/numbers are not
+ * config documents, so they throw too rather than degrading to {}.
+ * @param path - Override of the config path (tests; defaults to hubJsonEnvConfigPath).
+ * @returns The parsed config object ({} when the file does not exist).
+ */
+export function loadHubConfig(path?: string): HubJsonConfig {
+  const file = path ?? hubJsonEnvConfigPath();
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (err: unknown) {
+    // Only genuine absence is benign; rethrow loudly (a permissions error
+    // must not masquerade as "no config").
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  const parsed: unknown = JSON.parse(text);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${file}: config must be a JSON object`);
+  }
+  return parsed as HubJsonConfig;
+}
+
+/**
+ * Save the hub JSON config file, MERGE-PRESERVING every top-level key the
+ * caller did not provide (the trello-config verb may run long after other
+ * settings landed in this file; losing them would be data loss). Write is
+ * 2-space-pretty JSON + newline, mkdir -p on the parent, atomic-ish via a
+ * tmpfile + rename so a crashed write never leaves a truncated config.
+ * @param patch - Top-level keys to set (shallow top-level merge).
+ * @param path - Override of the config path (tests; defaults to hubJsonEnvConfigPath).
+ */
+export function saveHubConfig(patch: HubJsonConfig, path?: string): void {
+  const file = path ?? hubJsonEnvConfigPath();
+  const merged = { ...loadHubConfig(file), ...patch };
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`);
+  renameSync(tmp, file);
 }
