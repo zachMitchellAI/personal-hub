@@ -10,6 +10,10 @@ architecture and `BUILD-STATE.md` for what exists and why — this file is about
   what it holds: `card`, `row`, `match` — never `c`, `r`, `m`. Applies to src
   and tests alike. Single letters make diffs (and agents) re-derive meaning
   that the name could have carried for free.
+- **Exports live at the bottom.** Helpers above, public surface below — so a
+  reader (or agent) scanning a file sees the helpers first and the module's
+  entry points last, and can tell them apart at a glance. Exports in the
+  middle of a file blur helpers with main content (owner rule, 2026-11-11).
 
 ## Code structure (added 2026-11-11, owner review rule)
 

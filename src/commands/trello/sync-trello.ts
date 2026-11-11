@@ -39,37 +39,6 @@ const STATUS_TO_LIST: Record<string, 'ready' | 'in-progress' | 'done'> = {
   completed: 'done',
 };
 
-/** One planned action: what would change, for which task/card, and why. */
-export interface PlanAction {
-  /** create | update | move | re-create | adopt | archive | conflict */
-  action: string;
-  /** The hub task the action belongs to (null for a conflict against a
-   * live card no valid task owns). */
-  taskId: number | null;
-  /** The card id involved, when one exists live/mapped. */
-  cardId: string | null;
-  /** Target list role (create/move/archive-with-move). */
-  list?: 'ready' | 'in-progress' | 'done';
-  /** Human-readable one-liner for plan output. */
-  summary: string;
-}
-
-/** The full plan one sync run produces (also the --json contract). */
-export interface SyncPlan {
-  /** False on config problems (the verb exits 1 with a hint instead). */
-  ok: boolean;
-  /** true when --apply ran; false for the default dry-run. */
-  applied: boolean;
-  /** Which engine cache sync was skipped (--skip-cache-sync). */
-  skippedCacheSync: boolean;
-  /** How many rows the --mirror query served. */
-  mirrorCount: number;
-  /** Cards seen live across the three configured lists (incl. unowned). */
-  liveCount: number;
-  /** The planned/executed actions, in plan order. */
-  actions: PlanAction[];
-}
-
 /** Live card enriched with the hub tag parsed out of its title (null when untagged). */
 interface OwnedCard {
   card: TrelloCard;
@@ -595,58 +564,6 @@ function printApplyResult(
 }
 
 /**
- * The sync entry point. `--apply` executes; the DEFAULT is dry-run (prints
- * the plan, touches nothing — same convention import-vcf --dry-run uses but
- * inverted, because a write-into-a-remote-system verb must prove what it
- * would do before it does it). Decomposed (owner review 2026-11-11):
- * config → context → live index → plan → (dry-run print | apply) → report.
- * @param values - Parsed CLI flags: `apply', 'skip-cache-sync', `json`, `db`.
- * @returns Process exit code (0 in-sync-or-applied, 1 config/usage/plan errors).
- */
-export async function cmdSyncTrello(values: CliValues): Promise<number> {
-  // 1. Config: load + complete-check.
-  const loaded = loadTrelloConfig();
-  if (!loaded) return 1;
-  const trello = loaded.trello;
-
-  const { db } = openDb(values.db as string | undefined);
-  try {
-    const hub = makeDrizzle(db);
-
-    // 2-3. DB context + engine (cache sync honors --skip-cache-sync).
-    const context = await loadSyncContext(hub);
-    const engine: TrelloEngine = new TrelloCliEngine(trello);
-    const skipCacheSync = values['skip-cache-sync'] === true;
-    if (!skipCacheSync) await engine.syncCache();
-
-    // 4. Live cards, indexed.
-    const liveIndex = await fetchLiveIndex(engine, trello);
-
-    // 5. Plan.
-    const plan = planSync(context, liveIndex);
-
-    // 6. Dry-run prints and stops; --apply executes.
-    if (values.apply !== true) {
-      printDryRun(values, plan, {
-        mirrorCount: context.mirrorRows.length,
-        liveCount: liveIndex.liveCards.length,
-        skippedCacheSync: skipCacheSync,
-      });
-      return 0;
-    }
-    const result = await applyPlan(hub, engine, trello, plan, context, liveIndex);
-    printApplyResult(values, plan, result, {
-      mirrorCount: context.mirrorRows.length,
-      liveCount: liveIndex.liveCards.length,
-      skippedCacheSync: skipCacheSync,
-    });
-    return 0;
-  } finally {
-    db.close();
-  }
-}
-
-/**
  * Create-or-refresh one task_trello row (the mapping upsert shared by
  * create/re-create/adopt). task_id is the PK, so ON CONFLICT updates
  * card_id/synced_at in place instead of double-inserting; a collision on
@@ -721,4 +638,89 @@ function compactDetail(a: PlanAction): string {
   if (a.cardId) body.card_id = a.cardId;
   if (a.list) body.list = a.list;
   return JSON.stringify(body);
+}
+
+// ─── Public surface (exports live at the bottom, per owner rule 2026-11-11) ───
+
+/** One planned action: what would change, for which task/card, and why. */
+export interface PlanAction {
+  /** create | update | move | re-create | adopt | archive | conflict */
+  action: string;
+  /** The hub task the action belongs to (null for a conflict against a
+   * live card no valid task owns). */
+  taskId: number | null;
+  /** The card id involved, when one exists live/mapped. */
+  cardId: string | null;
+  /** Target list role (create/move/archive-with-move). */
+  list?: 'ready' | 'in-progress' | 'done';
+  /** Human-readable one-liner for plan output. */
+  summary: string;
+}
+
+/** The full plan one sync run produces (also the --json contract). */
+export interface SyncPlan {
+  /** False on config problems (the verb exits 1 with a hint instead). */
+  ok: boolean;
+  /** true when --apply ran; false for the default dry-run. */
+  applied: boolean;
+  /** Which engine cache sync was skipped (--skip-cache-sync). */
+  skippedCacheSync: boolean;
+  /** How many rows the --mirror query served. */
+  mirrorCount: number;
+  /** Cards seen live across the three configured lists (incl. unowned). */
+  liveCount: number;
+  /** The planned/executed actions, in plan order. */
+  actions: PlanAction[];
+}
+
+/**
+ * The sync entry point. `--apply` executes; the DEFAULT is dry-run (prints
+ * the plan, touches nothing — same convention import-vcf --dry-run uses but
+ * inverted, because a write-into-a-remote-system verb must prove what it
+ * would do before it does it). Decomposed (owner review 2026-11-11):
+ * config → context → live index → plan → (dry-run print | apply) → report.
+ * @param values - Parsed CLI flags: `apply', 'skip-cache-sync', `json`, `db`.
+ * @returns Process exit code (0 in-sync-or-applied, 1 config/usage/plan errors).
+ */
+export async function cmdSyncTrello(values: CliValues): Promise<number> {
+  // 1. Config: load + complete-check.
+  const loaded = loadTrelloConfig();
+  if (!loaded) return 1;
+  const trello = loaded.trello;
+
+  const { db } = openDb(values.db as string | undefined);
+  try {
+    const hub = makeDrizzle(db);
+
+    // 2-3. DB context + engine (cache sync honors --skip-cache-sync).
+    const context = await loadSyncContext(hub);
+    const engine: TrelloEngine = new TrelloCliEngine(trello);
+    const skipCacheSync = values['skip-cache-sync'] === true;
+    if (!skipCacheSync) await engine.syncCache();
+
+    // 4. Live cards, indexed.
+    const liveIndex = await fetchLiveIndex(engine, trello);
+
+    // 5. Plan.
+    const plan = planSync(context, liveIndex);
+
+    // 6. Dry-run prints and stops; --apply executes.
+    if (values.apply !== true) {
+      printDryRun(values, plan, {
+        mirrorCount: context.mirrorRows.length,
+        liveCount: liveIndex.liveCards.length,
+        skippedCacheSync: skipCacheSync,
+      });
+      return 0;
+    }
+    const result = await applyPlan(hub, engine, trello, plan, context, liveIndex);
+    printApplyResult(values, plan, result, {
+      mirrorCount: context.mirrorRows.length,
+      liveCount: liveIndex.liveCards.length,
+      skippedCacheSync: skipCacheSync,
+    });
+    return 0;
+  } finally {
+    db.close();
+  }
 }
