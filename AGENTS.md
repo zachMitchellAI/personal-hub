@@ -4,6 +4,13 @@ Standards for any agent (or human) working in this repo. Read the repo docs for
 architecture and `BUILD-STATE.md` for what exists and why — this file is about
 *how to change it*, not what it is.
 
+## Naming (added 2026-11-11, owner review rule)
+
+- **No single-letter variable or parameter names.** Every identifier states
+  what it holds: `card`, `row`, `match` — never `c`, `r`, `m`. Applies to src
+  and tests alike. Single letters make diffs (and agents) re-derive meaning
+  that the name could have carried for free.
+
 ## Hard constraints (non-negotiable)
 
 1. **Dependencies on purpose, not by default.** Before adding any npm

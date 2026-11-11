@@ -150,17 +150,12 @@ function describeDrift(
 }
 
 /**
- * The sync entry point. `--apply` executes; the DEFAULT is dry-run (prints
- * the plan, touches nothing — same convention import-vcf --dry-run uses but
- * inverted, because a write-into-a-remote-system verb must prove what it
- * would do before it does it). Flow: config → mirror set → cache sync →
- * card:list×3 → plan → upsert mapping rows + log-sync per applied action.
- * @param values - Parsed CLI flags: `apply', 'skip-cache-sync', `json`, `db`.
- * @returns Process exit code (0 in-sync-or-applied, 1 config/usage/plan errors).
+ * Load the hub config and complete-check its trello block. Prints the
+ * trello-config hint and returns null on failure — the caller exits 1.
+ * Split from cmdSyncTrello so the entry point reads as a step, not a scroll.
+ * @returns The complete trello block, or null when missing/incomplete/unreadable.
  */
-export async function cmdSyncTrello(values: CliValues): Promise<number> {
-  // 1. Load config (JSON path from core/paths.ts, HUB_CONFIG-overridable —
-  // tests point it at a throwaway file). Missing or incomplete → hint, exit 1.
+function loadTrelloConfig(): { trello: TrelloConfig } | null {
   let loaded: HubJsonConfig;
   try {
     loaded = loadHubConfig();
@@ -169,7 +164,7 @@ export async function cmdSyncTrello(values: CliValues): Promise<number> {
     console.error(
       'hub sync-trello: run hub trello-config --board <id> --list-ready <id> --list-in-progress <id> --list-done <id>',
     );
-    return 1;
+    return null;
   }
   const configResult = completeTrelloConfig(loaded);
   if ('missing' in configResult) {
@@ -177,309 +172,474 @@ export async function cmdSyncTrello(values: CliValues): Promise<number> {
     console.error(
       'hub sync-trello: run hub trello-config --board <id> --list-ready <id> --list-in-progress <id> --list-done <id>',
     );
-    return 1;
+    return null;
   }
-  const trello = configResult.trello;
+  return { trello: configResult.trello };
+}
+
+/**
+ * Everything the planner reads from the DB, fetched in one place: the mirror
+ * set, the task→card mapping rows, and the lookup maps derived from both.
+ * @param hub - Typed drizzle handle.
+ */
+interface SyncContext {
+  /** Mirrored tasks (trelloVisible, ready|in-progress), ordered by id. */
+  mirrorRows: (typeof tasks.$inferSelect)[];
+  /** All task_trello rows (task_id PK + UNIQUE card_id). */
+  mappingRows: (typeof taskTrello.$inferSelect)[];
+  /** mappingRows keyed by taskId. */
+  mappingByTask: Map<number, typeof taskTrello.$inferSelect>;
+  /** Every task row (any status) keyed by id — adopt-leg FK validation. */
+  tasksById: Map<number, typeof tasks.$inferSelect>;
+  /** Task ids that already own a mapping row. */
+  tasksWithCard: Set<number>;
+  /** Mapping-row task ids (same set as mappingByTask keys, kept explicit). */
+  mappingTaskIds: Set<number>;
+}
+
+/**
+ * Fetch the DB-side planning inputs (the reads cmdSyncTrello used to do
+ * inline). Kept separate so the planner is a pure function over fetched
+ * state — readable, and trivially testable without an engine.
+ * @param hub - Typed drizzle handle.
+ * @returns The fetched context.
+ */
+async function loadSyncContext(hub: HubDb): Promise<SyncContext> {
+  const mirrorRows: (typeof tasks.$inferSelect)[] = await hub
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.trelloVisible, 1), inArray(tasks.status, ['ready', 'in-progress'])))
+    .orderBy(tasks.id)
+    .all();
+  const mappingRows: (typeof taskTrello.$inferSelect)[] = await hub.select().from(taskTrello).all();
+  const mappingByTask = new Map<number, typeof taskTrello.$inferSelect>(mappingRows.map((row) => [row.taskId, row]));
+  const tasksById = new Map<number, typeof tasks.$inferSelect>(
+    (await hub.select().from(tasks).all()).map((row) => [row.id, row]),
+  );
+  return {
+    mirrorRows,
+    mappingRows,
+    mappingByTask,
+    tasksById,
+    tasksWithCard: new Set(mappingByTask.keys()),
+    mappingTaskIds: new Set(mappingRows.map((row) => row.taskId)),
+  };
+}
+
+/** Live cards + the two indexes the planner needs (by parsed tag, by card id). */
+interface LiveIndex {
+  /** Every card on the three configured lists, tag-parsed. */
+  liveCards: OwnedCard[];
+  /** Tag'd cards grouped by hub id — a group >1 is a conflict candidate. */
+  byTag: Map<number, OwnedCard[]>;
+  /** Card id → live entry (re-create/archive/apply need id lookups). */
+  liveById: Map<string, OwnedCard>;
+}
+
+/**
+ * Read every configured list through the engine and index the cards.
+ * @param engine - The spawn-based engine.
+ * @param trello - The complete trello config (board + list roles).
+ * @returns The live index.
+ */
+async function fetchLiveIndex(engine: TrelloEngine, trello: TrelloConfig): Promise<LiveIndex> {
+  const liveCards: OwnedCard[] = [];
+  for (const [role, listRef] of Object.entries(trello.lists) as [keyof typeof trello.lists, string][]) {
+    const cards = await engine.listCards(listRef);
+    for (const card of cards) {
+      const match = card.name.match(HUB_PREFIX_RE);
+      const hubId = match ? parseId(match[1]) : null;
+      liveCards.push({ card, taskId: hubId, list: role });
+    }
+  }
+  const byTag = new Map<number, OwnedCard[]>();
+  for (const live of liveCards) {
+    if (live.taskId === null) continue;
+    const group = byTag.get(live.taskId) ?? [];
+    group.push(live);
+    byTag.set(live.taskId, group);
+  }
+  const liveById = new Map<string, OwnedCard>(liveCards.map((live) => [live.card.id, live]));
+  return { liveCards, byTag, liveById };
+}
+
+/** The planner output: actions in execution order + the conflicting hub ids. */
+interface Plan {
+  actions: PlanAction[];
+  /** Hub ids with ≥2 tag claims — the planner and apply leg both skip these. */
+  conflicts: Set<number>;
+}
+
+/**
+ * Build the reconcile plan for one task's tag situation (a step of planSync):
+ * one tagged card → drift; none → create/re-create; multiple with this
+ * task's tag → conflict, nothing applied.
+ */
+function planTaskCards(
+  task: typeof tasks.$inferSelect,
+  tagged: OwnedCard[],
+  mapping: typeof taskTrello.$inferSelect | undefined,
+  liveIndex: LiveIndex,
+  plan: Plan,
+): void {
+  if (tagged.length === 1) {
+    const live = tagged[0];
+    const drift = describeDrift(task, live.card, live.list);
+    if (drift) {
+      plan.actions.push(drift.updates);
+      if (live.list !== STATUS_TO_LIST[task.status]) plan.actions.push(drift.moves);
+    }
+    return;
+  }
+
+  if (tagged.length === 0) {
+    if (mapping && !liveIndex.liveById.has(mapping.cardId)) {
+      // The mapped card vanished live (archived out-of-band) — re-create.
+      const listRole = STATUS_TO_LIST[task.status] ?? 'ready';
+      plan.actions.push({
+        action: 're-create',
+        taskId: task.id,
+        cardId: mapping.cardId,
+        list: listRole,
+        summary: `task ${task.id}: re-create (mapped card ${mapping.cardId} not on board) — [hub-${task.id}] ${task.title}`,
+      });
+    } else {
+      // No card anywhere — plain create.
+      const listRole = STATUS_TO_LIST[task.status] ?? 'ready';
+      plan.actions.push({
+        action: 'create',
+        taskId: task.id,
+        cardId: null,
+        list: listRole,
+        summary: `task ${task.id}: create [hub-${task.id}] ${task.title} → ${listRole}`,
+      });
+    }
+    return;
+  }
+
+  // tagged.length > 1 with matching task id: a second card carries the
+  // same tag as one this task already maps to. Report, don't guess.
+  plan.conflicts.add(task.id);
+  plan.actions.push({
+    action: 'conflict',
+    taskId: task.id,
+    cardId: tagged.map((card) => card.card.id).join('+'),
+    summary: `conflict: [hub-${task.id}] matches ${tagged.length} live cards — nothing applied (dedupe manually)`,
+  });
+}
+
+/**
+ * Adopt step of planSync: cards tagged with a hub id that EXISTS in the
+ * tasks table but has no mapping row — rebuild the mapping from the title
+ * tag (recovers a lost DB). A tag pointing at a deleted/nonexistent task
+ * is NOT adopted: the mapping FK would reject it, and adopting it would
+ * let a typo'd manual retag grow phantom rows.
+ */
+function planAdoptions(context: SyncContext, liveIndex: LiveIndex, plan: Plan): void {
+  for (const live of liveIndex.liveCards) {
+    if (live.taskId === null) continue;
+    if (plan.conflicts.has(live.taskId)) continue;
+    if (liveIndex.byTag.get(live.taskId)?.length !== 1) continue; // already handled/conflicted
+    if (context.tasksWithCard.has(live.taskId) && context.mappingByTask.get(live.taskId)?.cardId === live.card.id) {
+      continue;
+    }
+    if (context.mappingTaskIds.has(live.taskId)) continue;
+    // A tag pointing at a nonexistent task is a stray/typo'd retag — the
+    // mapping FK would reject it, so leave the card untouched.
+    if (!context.tasksById.has(live.taskId)) continue;
+    plan.actions.push({
+      action: 'adopt',
+      taskId: live.taskId,
+      cardId: live.card.id,
+      summary: `task ${live.taskId}: adopt card ${live.card.id} from title tag ("${live.card.name}")`,
+    });
+  }
+}
+
+/**
+ * Archive step of planSync: mapping rows whose task is GONE from the mirror
+ * set (completed, de-flagged, or hard-deleted). Completed tasks move to the
+ * Done list first (status↔list 1:1 preserved) then archive in the same
+ * run — ONE ledger row, detail carries {list: done}.
+ */
+function planArchives(context: SyncContext, liveIndex: LiveIndex, plan: Plan): void {
+  const mirrorIds = new Set(context.mirrorRows.map((row) => row.id));
+  for (const row of context.mappingRows) {
+    if (mirrorIds.has(row.taskId) || plan.conflicts.has(row.taskId)) continue;
+    const live = liveIndex.liveById.get(row.cardId);
+    const taskRow = context.tasksById.get(row.taskId);
+    if (!live && !taskRow) {
+      // BOTH gone (task hard-deleted while its card was archived
+      // out-of-band): task_trello cascaded with the delete, so no mapping
+      // row survives to archive — leave the dead card untouched.
+      continue;
+    }
+    const completed = taskRow?.status === 'completed';
+    plan.actions.push({
+      action: 'archive',
+      taskId: row.taskId,
+      cardId: row.cardId,
+      list: completed ? 'done' : undefined,
+      summary: live
+        ? `task ${row.taskId}: archive card ${row.cardId}${completed ? ' (move → done first)' : ' (task no longer mirrored)'}`
+        : `task ${row.taskId}: mapping row only — card ${row.cardId} already gone; drop the stale mapping`,
+    });
+  }
+}
+
+/**
+ * Build the plan: conflict detection, per-mirror-task reconcile, adopt, and
+ * archive — the pure core of sync (no engine calls, no writes).
+ * @param context - The fetched DB context.
+ * @param liveIndex - The fetched live-card index.
+ * @returns The plan (actions + conflict set).
+ */
+function planSync(context: SyncContext, liveIndex: LiveIndex): Plan {
+  const plan: Plan = { actions: [], conflicts: new Set() };
+
+  // Which task id does each tag'd card BELONG to, after conflict checks?
+  // Two tasks claiming the same card (stale retag, mapping both ways) is a
+  // REPORTED conflict, nothing applied for it (ticket step 5, last bullet).
+  for (const [hubId, cards] of liveIndex.byTag) {
+    if (cards.length > 1) {
+      plan.conflicts.add(hubId);
+      plan.actions.push({
+        action: 'conflict',
+        taskId: hubId,
+        cardId: cards.map((card) => card.card.id).join('+'),
+        summary: `conflict: card(s) tagged [hub-${hubId}] also claimed by another task — nothing applied for them (${cards.map((card) => card.card.id).join(', ')})`,
+      });
+    }
+  }
+
+  // Per mirrored task: create / reconcile / re-create (or conflict).
+  for (const task of context.mirrorRows) {
+    if (plan.conflicts.has(task.id)) continue; // conflicted cards: nothing applied
+    planTaskCards(task, liveIndex.byTag.get(task.id) ?? [], context.mappingByTask.get(task.id), liveIndex, plan);
+  }
+
+  planAdoptions(context, liveIndex, plan);
+  planArchives(context, liveIndex, plan);
+  return plan;
+}
+
+/**
+ * Dry-run reporting: print, touch nothing (no mapping rows, no ledger rows —
+ * reading the DB was the only side effect so far).
+ * @param values - CLI flags (json output format).
+ * @param plan - The built plan.
+ * @param counts - Report counts: mirrored tasks, live cards, cache skipped.
+ */
+function printDryRun(
+  values: CliValues,
+  plan: Plan,
+  counts: { mirrorCount: number; liveCount: number; skippedCacheSync: boolean },
+): void {
+  if (values.json) {
+    const report: SyncPlan = {
+      ok: true,
+      applied: false,
+      skippedCacheSync: counts.skippedCacheSync,
+      mirrorCount: counts.mirrorCount,
+      liveCount: counts.liveCount,
+      actions: plan.actions,
+    };
+    console.log(JSON.stringify({ verb: 'sync-trello', ...report }, null, 2));
+  } else if (plan.actions.length === 0) {
+    console.log(`hub sync-trello: in sync (${counts.mirrorCount} mirrored tasks, ${counts.liveCount} live cards)`);
+  } else {
+    console.log(
+      `hub sync-trello plan (dry-run — nothing applied; ${counts.mirrorCount} mirrored, ${counts.liveCount} live):`,
+    );
+    for (const action of plan.actions) console.log(`  ${action.summary}`);
+  }
+}
+
+/**
+ * The --apply executor: run each action through the engine, upsert mapping
+ * rows, and log exactly one sync_log row via the cmdLogSync idempotent path
+ * (re-runs of a replayed action stay ledger-clean — first log wins, S7
+ * contract). UNIQUE(card_id) violations surface as apply-time conflicts and
+ * keep the rest of the actions going.
+ * @param hub - Typed drizzle handle.
+ * @param engine - The spawn-based engine.
+ * @param trello - The complete trello config.
+ * @param plan - The plan to execute (mutated: apply-time conflicts append).
+ * @param context - Fetched context (task rows for create/update payloads).
+ * @param liveIndex - Fetched live index (card lookups).
+ * @returns The applied actions (non-conflict) and their ledger rows.
+ */
+async function applyPlan(
+  hub: HubDb,
+  engine: TrelloEngine,
+  trello: TrelloConfig,
+  plan: Plan,
+  context: SyncContext,
+  liveIndex: LiveIndex,
+): Promise<{ executed: PlanAction[]; logged: SyncLogJson[] }> {
+  const now = new Date().toISOString();
+  const logged: SyncLogJson[] = [];
+  for (const action of plan.actions) {
+    try {
+      switch (action.action) {
+        case 'create':
+        case 're-create': {
+          const task = context.mirrorRows.find((row) => row.id === action.taskId)!;
+          const card = await engine.createCard({
+            listRef: trello.lists[action.list as keyof typeof trello.lists],
+            name: `[hub-${task.id}] ${task.title}`,
+            description: task.notes,
+            due: task.dueDate,
+          });
+          await upsertMapping(hub, task.id, card.id, now);
+          break;
+        }
+        case 'update': {
+          const task = context.mirrorRows.find((row) => row.id === action.taskId)!;
+          const card = liveIndex.liveById.get(action.cardId!)!.card;
+          const expectedTitle = `[hub-${task.id}] ${task.title}`;
+          const patch: { name?: string; description?: string; due?: string | null } = {};
+          if (card.name !== expectedTitle) patch.name = expectedTitle;
+          if (card.description !== (task.notes ?? '')) patch.description = task.notes ?? '';
+          if ((card.due ?? '') !== (task.dueDate ?? '')) patch.due = task.dueDate;
+          if (Object.keys(patch).length) await engine.updateCard(card.id, patch);
+          break;
+        }
+        case 'move': {
+          await engine.moveCard(action.cardId!, trello.lists[action.list as keyof typeof trello.lists]);
+          break;
+        }
+        case 'adopt': {
+          await upsertMapping(hub, action.taskId!, action.cardId!, now);
+          break;
+        }
+        case 'archive': {
+          if (action.list === 'done') {
+            const listed = liveIndex.liveById.get(action.cardId!);
+            if (listed && listed.list !== 'done') await engine.moveCard(action.cardId!, trello.lists.done);
+          }
+          await engine.archiveCard(action.cardId!);
+          await hub.delete(taskTrello).where(eq(taskTrello.taskId, action.taskId!)).run();
+          break;
+        }
+        case 'conflict':
+          break; // reported, never applied (and never logged — no action occurred)
+        default:
+          break;
+      }
+    } catch (err: unknown) {
+      // UNIQUE(card_id) violation during an upsert = double-mapping attempt
+      // surfaced at apply time: report as conflict, keep other actions going.
+      const chain = errorChainText(err);
+      if (/task_trello_card_unique|UNIQUE constraint failed/.test(chain) && /card_id|task_trello/.test(chain)) {
+        plan.actions.push({
+          action: 'conflict',
+          taskId: action.taskId,
+          cardId: action.cardId,
+          summary: `conflict apply-time: task ${action.taskId} mapping for card ${action.cardId} rejected — card already claimed (UNIQUE card_id)`,
+        });
+        continue;
+      }
+      throw err;
+    }
+
+    // One ledger row per executed action via the existing idempotent path.
+    const loggedRow = await logSyncAction(hub, action, now);
+    if (loggedRow) logged.push(loggedRow);
+  }
+  const executed = plan.actions.filter((candidate) => candidate.action !== 'conflict');
+  return { executed, logged };
+}
+
+/**
+ * Apply-mode reporting: console or JSON, identical shape to the pre-decompose
+ * output (actions appear both inside the plan and as the mutated top-level
+ * list — contract preserved for consumers).
+ * @param values - CLI flags (json output format).
+ * @param plan - The apply-time-mutated plan (apply-time conflicts appended).
+ * @param result - Executed actions + ledger rows from applyPlan.
+ * @param counts - Report counts: mirrored tasks, live cards, cache skipped.
+ */
+function printApplyResult(
+  values: CliValues,
+  plan: Plan,
+  result: { executed: PlanAction[]; logged: SyncLogJson[] },
+  counts: { mirrorCount: number; liveCount: number; skippedCacheSync: boolean },
+): void {
+  if (values.json) {
+    const report: SyncPlan = {
+      ok: true,
+      applied: true,
+      skippedCacheSync: counts.skippedCacheSync,
+      mirrorCount: counts.mirrorCount,
+      liveCount: counts.liveCount,
+      actions: plan.actions,
+    };
+    console.log(
+      JSON.stringify(
+        { verb: 'sync-trello', ...report, executed: result.executed.length, logged: result.logged },
+        null,
+        2,
+      ),
+    );
+  } else if (result.executed.length === 0) {
+    console.log(
+      `hub sync-trello: in sync (no actions; ${counts.mirrorCount} mirrored tasks, ${counts.liveCount} live cards)`,
+    );
+  } else {
+    for (const action of result.executed) console.log(`${action.action}: ${action.summary}`);
+    console.log(
+      `hub sync-trello: applied ${result.executed.length} action(s), logged ${result.logged.length} sync row(s)`,
+    );
+  }
+}
+
+/**
+ * The sync entry point. `--apply` executes; the DEFAULT is dry-run (prints
+ * the plan, touches nothing — same convention import-vcf --dry-run uses but
+ * inverted, because a write-into-a-remote-system verb must prove what it
+ * would do before it does it). Decomposed (owner review 2026-11-11):
+ * config → context → live index → plan → (dry-run print | apply) → report.
+ * @param values - Parsed CLI flags: `apply', 'skip-cache-sync', `json`, `db`.
+ * @returns Process exit code (0 in-sync-or-applied, 1 config/usage/plan errors).
+ */
+export async function cmdSyncTrello(values: CliValues): Promise<number> {
+  // 1. Config: load + complete-check.
+  const loaded = loadTrelloConfig();
+  if (!loaded) return 1;
+  const trello = loaded.trello;
 
   const { db } = openDb(values.db as string | undefined);
   try {
     const hub = makeDrizzle(db);
 
-    // 2. The mirror set — the EXACT query list-tasks --mirror composes.
-    const mirrorRows = await hub
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.trelloVisible, 1), inArray(tasks.status, ['ready', 'in-progress'])))
-      .orderBy(tasks.id)
-      .all();
-
+    // 2-3. DB context + engine (cache sync honors --skip-cache-sync).
+    const context = await loadSyncContext(hub);
     const engine: TrelloEngine = new TrelloCliEngine(trello);
-
-    // 3. Warm the engine cache (card:create/card:list resolve name-or-id
-    // through it). Skipped with --skip-cache-sync (tests; stale-cache runs).
     const skipCacheSync = values['skip-cache-sync'] === true;
     if (!skipCacheSync) await engine.syncCache();
 
-    // 4. Read every configured list, tag-parse the cards.
-    const liveCards: OwnedCard[] = [];
-    for (const [role, listRef] of Object.entries(trello.lists) as [keyof typeof trello.lists, string][]) {
-      const cards = await engine.listCards(listRef);
-      for (const card of cards) {
-        const m = card.name.match(HUB_PREFIX_RE);
-        const hubId = m ? parseId(m[1]) : null;
-        liveCards.push({ card, taskId: hubId, list: role });
-      }
-    }
+    // 4. Live cards, indexed.
+    const liveIndex = await fetchLiveIndex(engine, trello);
 
-    // Index live cards by parsed tag and by id (conflict detection needs both).
-    const byTag = new Map<number, OwnedCard[]>();
-    for (const live of liveCards) {
-      if (live.taskId === null) continue;
-      const list = byTag.get(live.taskId) ?? [];
-      list.push(live);
-      byTag.set(live.taskId, list);
-    }
-    const liveById = new Map<string, OwnedCard>(liveCards.map((l) => [l.card.id, l]));
+    // 5. Plan.
+    const plan = planSync(context, liveIndex);
 
-    // Existing mapping rows: task_id PK (one task→one card) with the
-    // UNIQUE(card_id) double-mapping guard (schema.ts S11 block).
-    const mappingRows: (typeof taskTrello.$inferSelect)[] = await hub.select().from(taskTrello).all();
-    const mappingByTask = new Map<number, typeof taskTrello.$inferSelect>(mappingRows.map((r) => [r.taskId, r]));
-    // Every task row (any status), keyed by id — the adopt leg validates a
-    // card's tag against REAL tasks (mapping FK contract: task must exist).
-    const taskIdsInDb = new Map<number, typeof tasks.$inferSelect>(
-      (await hub.select().from(tasks).all()).map((r) => [r.id, r]),
-    );
-    const taskIdsWithCard = new Set(mappingByTask.keys());
-    const mappingTaskIds = new Set(mappingRows.map((r) => r.taskId));
-
-    // Which task id does each tag'd card BELONG to, after conflict checks?
-    // Two tasks claiming the same card (stale retag, mapping both ways) is a
-    // REPORTED conflict, nothing applied for it (ticket step 5, last bullet).
-    const actions: PlanAction[] = [];
-    const conflicts = new Set<number>(); // hub-prefixed cards with ≥2 claims
-    for (const [hubId, cards] of byTag) {
-      if (cards.length > 1) {
-        conflicts.add(hubId);
-        actions.push({
-          action: 'conflict',
-          taskId: hubId,
-          cardId: cards.map((card) => card.card.id).join('+'),
-          summary: `conflict: card(s) tagged [hub-${hubId}] also claimed by another task — nothing applied for them (${cards.map((card) => card.card.id).join(', ')})`,
-        });
-      }
-    }
-
-    // 5. Plan per mirrored task: create / reconcile / re-create.
-    for (const task of mirrorRows) {
-      if (conflicts.has(task.id)) continue; // conflicted cards: nothing applied
-      const tagged = byTag.get(task.id) ?? [];
-      const mapping = mappingByTask.get(task.id);
-
-      if (tagged.length === 1) {
-        const live = tagged[0];
-        const drift = describeDrift(task, live.card, live.list);
-        if (drift) {
-          actions.push(drift.updates);
-          if (live.list !== STATUS_TO_LIST[task.status]) actions.push(drift.moves);
-        }
-        continue;
-      }
-
-      if (tagged.length === 0) {
-        if (mapping && !liveById.has(mapping.cardId)) {
-          // The mapped card vanished live (archived out-of-band) — re-create.
-          const listRole = STATUS_TO_LIST[task.status] ?? 'ready';
-          actions.push({
-            action: 're-create',
-            taskId: task.id,
-            cardId: mapping.cardId,
-            list: listRole,
-            summary: `task ${task.id}: re-create (mapped card ${mapping.cardId} not on board) — [hub-${task.id}] ${task.title}`,
-          });
-        } else {
-          // No card anywhere — plain create.
-          const listRole = STATUS_TO_LIST[task.status] ?? 'ready';
-          actions.push({
-            action: 'create',
-            taskId: task.id,
-            cardId: null,
-            list: listRole,
-            summary: `task ${task.id}: create [hub-${task.id}] ${task.title} → ${listRole}`,
-          });
-        }
-        continue;
-      }
-
-      // tagged.length > 1 with matching task id: a second card carries the
-      // same tag as one this task already maps to. Report, don't guess.
-      conflicts.add(task.id);
-      actions.push({
-        action: 'conflict',
-        taskId: task.id,
-        cardId: tagged.map((card) => card.card.id).join('+'),
-        summary: `conflict: [hub-${task.id}] matches ${tagged.length} live cards — nothing applied (dedupe manually)`,
+    // 6. Dry-run prints and stops; --apply executes.
+    if (values.apply !== true) {
+      printDryRun(values, plan, {
+        mirrorCount: context.mirrorRows.length,
+        liveCount: liveIndex.liveCards.length,
+        skippedCacheSync: skipCacheSync,
       });
-    }
-
-    // Adopt: cards tagged with a hub id that EXISTS in the tasks table but
-    // has no mapping row — rebuild the mapping from the title tag (recovers
-    // a lost DB). A tag pointing at a deleted/nonexistent task is NOT
-    // adopted: the mapping FK would reject it, and adopting it would let a
-    // typo'd manual retag grow phantom rows.
-    for (const live of liveCards) {
-      if (live.taskId === null) continue;
-      if (conflicts.has(live.taskId)) continue;
-      if (byTag.get(live.taskId)?.length !== 1) continue; // already handled/conflicted
-      if (taskIdsWithCard.has(live.taskId) && mappingByTask.get(live.taskId)?.cardId === live.card.id) continue;
-      if (mappingTaskIds.has(live.taskId)) continue;
-      // A tag pointing at a nonexistent task is a stray/typo'd retag — the
-      // mapping FK would reject it, so leave the card untouched.
-      if (!taskIdsInDb.has(live.taskId)) continue;
-      actions.push({
-        action: 'adopt',
-        taskId: live.taskId,
-        cardId: live.card.id,
-        summary: `task ${live.taskId}: adopt card ${live.card.id} from title tag ("${live.card.name}")`,
-      });
-    }
-
-    // Archive: mapping rows whose task is GONE from the mirror set
-    // (completed, de-flagged, or hard-deleted). Completed tasks move to the
-    // Done list first (status↔list 1:1 preserved) then archive in the same
-    // run — ONE ledger row, detail carries {list: done}.
-    const mirrorIds = new Set(mirrorRows.map((r) => r.id));
-    for (const row of mappingRows) {
-      if (mirrorIds.has(row.taskId) || conflicts.has(row.taskId)) continue;
-      const live = liveById.get(row.cardId);
-      const taskRow = taskIdsInDb.get(row.taskId);
-      if (!live && !taskRow) continue; // BOTH gone (task hard-deleted while its card was archived out-of-band): task_trello cascaded with the delete, so no mapping row survives to archive — leave the dead card untouched
-      const completed = taskRow?.status === 'completed';
-      actions.push({
-        action: 'archive',
-        taskId: row.taskId,
-        cardId: row.cardId,
-        list: completed ? 'done' : undefined,
-        summary: live
-          ? `task ${row.taskId}: archive card ${row.cardId}${completed ? ' (move → done first)' : ' (task no longer mirrored)'}`
-          : `task ${row.taskId}: mapping row only — card ${row.cardId} already gone; drop the stale mapping`,
-      });
-    }
-    // ─── Report / apply ───────────────────────────────────────────────────
-    const applied = values.apply === true;
-    const plan: SyncPlan = {
-      ok: true,
-      applied,
-      skippedCacheSync: skipCacheSync,
-      mirrorCount: mirrorRows.length,
-      liveCount: liveCards.length,
-      actions,
-    };
-
-    if (!applied) {
-      // DRY-RUN: print, touch nothing (no mapping rows, no ledger rows — the
-      // config-load above ran against the DB but performed zero writes).
-      if (values.json) {
-        console.log(JSON.stringify({ verb: 'sync-trello', ...plan }, null, 2));
-      } else if (actions.length === 0) {
-        console.log(`hub sync-trello: in sync (${plan.mirrorCount} mirrored tasks, ${plan.liveCount} live cards)`);
-      } else {
-        console.log(
-          `hub sync-trello plan (dry-run — nothing applied; ${plan.mirrorCount} mirrored, ${plan.liveCount} live):`,
-        );
-        for (const a of actions) console.log(`  ${a.summary}`);
-      }
       return 0;
     }
-
-    // --apply: execute each action through the engine. Every executed
-    // action upserts its mapping row and logs exactly one sync_log row via
-    // the cmdLogSync idempotent path (re-runs of a replayed action stay
-    // ledger-clean — first log wins, S7 contract).
-    const now = new Date().toISOString();
-    const logged: SyncLogJson[] = [];
-    for (const a of actions) {
-      try {
-        switch (a.action) {
-          case 'create': {
-            const task = mirrorRows.find((r) => r.id === a.taskId)!;
-            const card = await engine.createCard({
-              listRef: trello.lists[a.list as keyof typeof trello.lists],
-              name: `[hub-${task.id}] ${task.title}`,
-              description: task.notes,
-              due: task.dueDate,
-            });
-            await upsertMapping(hub, task.id, card.id, now);
-            break;
-          }
-          case 'update': {
-            const task = mirrorRows.find((r) => r.id === a.taskId)!;
-            const card = liveById.get(a.cardId!)!.card;
-            const expectedTitle = `[hub-${task.id}] ${task.title}`;
-            const patch: { name?: string; description?: string; due?: string | null } = {};
-            if (card.name !== expectedTitle) patch.name = expectedTitle;
-            if (card.description !== (task.notes ?? '')) patch.description = task.notes ?? '';
-            if ((card.due ?? '') !== (task.dueDate ?? '')) patch.due = task.dueDate;
-            if (Object.keys(patch).length) await engine.updateCard(card.id, patch);
-            break;
-          }
-          case 'move': {
-            await engine.moveCard(a.cardId!, trello.lists[a.list as keyof typeof trello.lists]);
-            break;
-          }
-          case 're-create': {
-            const task = mirrorRows.find((r) => r.id === a.taskId)!;
-            const card = await engine.createCard({
-              listRef: trello.lists[a.list as keyof typeof trello.lists],
-              name: `[hub-${task.id}] ${task.title}`,
-              description: task.notes,
-              due: task.dueDate,
-            });
-            await upsertMapping(hub, task.id, card.id, now);
-            break;
-          }
-          case 'adopt': {
-            await upsertMapping(hub, a.taskId!, a.cardId!, now);
-            break;
-          }
-          case 'archive': {
-            if (a.list === 'done') {
-              const listed = liveById.get(a.cardId!);
-              if (listed && listed.list !== 'done') await engine.moveCard(a.cardId!, trello.lists.done);
-            }
-            await engine.archiveCard(a.cardId!);
-            await hub.delete(taskTrello).where(eq(taskTrello.taskId, a.taskId!)).run();
-            break;
-          }
-          case 'conflict':
-            break; // reported, never applied (and never logged — no action occurred)
-          default:
-            break;
-        }
-      } catch (err: unknown) {
-        // UNIQUE(card_id) violation during an upsert = double-mapping attempt
-        // surfaced at apply time: report as conflict, keep other actions going.
-        const chain = errorChainText(err);
-        if (/task_trello_card_unique|UNIQUE constraint failed/.test(chain) && /card_id|task_trello/.test(chain)) {
-          actions.push({
-            action: 'conflict',
-            taskId: a.taskId,
-            cardId: a.cardId,
-            summary: `conflict apply-time: task ${a.taskId} mapping for card ${a.cardId} rejected — card already claimed (UNIQUE card_id)`,
-          });
-          continue;
-        }
-        throw err;
-      }
-
-      // One ledger row per executed action via the existing idempotent path.
-      const logged0 = await logSyncAction(hub, a, now);
-      if (logged0) logged.push(logged0);
-    }
-
-    const executed = actions.filter((a) => a.action !== 'conflict');
-    if (values.json) {
-      console.log(
-        JSON.stringify(
-          {
-            verb: 'sync-trello',
-            ...plan,
-            actions,
-            executed: executed.length,
-            logged,
-          },
-          null,
-          2,
-        ),
-      );
-    } else if (executed.length === 0) {
-      console.log(
-        `hub sync-trello: in sync (no actions; ${plan.mirrorCount} mirrored tasks, ${plan.liveCount} live cards)`,
-      );
-    } else {
-      for (const a of executed) console.log(`${a.action}: ${a.summary}`);
-      console.log(`hub sync-trello: applied ${executed.length} action(s), logged ${logged.length} sync row(s)`);
-    }
+    const result = await applyPlan(hub, engine, trello, plan, context, liveIndex);
+    printApplyResult(values, plan, result, {
+      mirrorCount: context.mirrorRows.length,
+      liveCount: liveIndex.liveCards.length,
+      skippedCacheSync: skipCacheSync,
+    });
     return 0;
   } finally {
     db.close();
