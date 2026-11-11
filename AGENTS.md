@@ -11,6 +11,16 @@ architecture and `BUILD-STATE.md` for what exists and why — this file is about
   and tests alike. Single letters make diffs (and agents) re-derive meaning
   that the name could have carried for free.
 
+## Code structure (added 2026-11-11, owner review rule)
+
+- **Size functions to their meaning, not a line count.** A long multi-step
+  function gets decomposed into flat, meaning-named step functions
+  (`planSync` calling `planTaskCards`/`planAdoptions`/`planArchives`), with a
+  readable entry point on top. But don't over-split — each function should be
+  big enough to mean something alone (owner: "not overly tiny — this function
+  scoping is just right", post-decompose of cmdSyncTrello). Nesting
+  step-functions inside each other is explicitly avoided.
+
 ## Hard constraints (non-negotiable)
 
 1. **Dependencies on purpose, not by default.** Before adding any npm
