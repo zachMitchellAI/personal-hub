@@ -27,7 +27,7 @@ import {
   cmdListEntityLinks,
   cmdUnlinkEntity,
 } from './commands/entities.ts';
-import { cmdAddFile, cmdListFiles } from './commands/files.ts';
+import { cmdAddFile, cmdListFiles, cmdMoveFile } from './commands/files.ts';
 import { cmdImportVcf } from './commands/import-vcf.ts';
 import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
 import { cmdTrelloConfig } from './commands/trello/trello-config.ts';
@@ -94,6 +94,7 @@ export const VERBS: Record<string, VerbHandler> = {
   'unlink-entity': cmdUnlinkEntity,
   'add-file': cmdAddFile,
   'list-files': cmdListFiles,
+  'move-file': cmdMoveFile,
   // S8b — permanent re-runnable contact importer (DECISIONS #7).
   'import-vcf': cmdImportVcf,
   // S12 — CRUD gap-closers: partial edits, hard deletes, person merge.

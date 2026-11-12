@@ -107,6 +107,7 @@ export const VERB_NAMES = [
   'unlink-entity',
   'add-file',
   'list-files',
+  'move-file',
   // S8b — permanent re-runnable contact importer (DECISIONS #7).
   'import-vcf',
   'log-sync',
@@ -164,6 +165,7 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   'unlink-entity': [],
   'add-file': ['path', 'kind', 'person', 'task', 'note'],
   'list-files': ['person', 'task', 'kind'],
+  'move-file': ['path'],
   'import-vcf': ['dry-run'],
   // S12 — CRUD verbs. merge-person takes the from-slug as its positional.
   'edit-person': ['name', 'first-name', 'last-name', 'relationship-type', 'employer', 'notes'],
@@ -207,6 +209,7 @@ export const REQUIRED_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OP
   'add-entity': ['kind', 'label'],
   'link-entity': ['target-type', 'target'],
   'add-file': ['path', 'kind'],
+  'move-file': ['path'],
   'log-sync': ['entity', 'entity-id', 'action'],
 };
 

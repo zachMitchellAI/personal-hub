@@ -467,3 +467,55 @@ test('S7: fresh init lands at user_version 7+', (t) => {
     db.close();
   }
 });
+
+// move-file (S12 amendment) — re-points an indexed file's path. Contract:
+// the CLI performs NO disk I/O; the record is the only thing updated, and
+// every other field (kind/person/task/added_at/note) is preserved untouched.
+test('S12: move-file re-points path and preserves all other fields', (t) => {
+  const tmp = makeTmp();
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const env = { HUB_DB: join(tmp, 'life.db') };
+  seedBaseline(env);
+
+  const added = runCli(['add-file', '--path', '~/hub/files/sample-panel/note.md', '--kind', 'markdown', '--json'], env);
+  assert.equal(added.status, 0, added.stderr);
+  const before = JSON.parse(added.stdout);
+
+  const moved = runCli(['move-file', String(before.id), '--path', '~/hub/files/sample/panel/note.md', '--json'], env);
+  assert.equal(moved.status, 0, moved.stderr);
+  const after = JSON.parse(moved.stdout);
+  assert.equal(after.verb, 'move-file');
+  assert.equal(after.id, before.id);
+  assert.equal(after.path, '~/hub/files/sample/panel/note.md');
+  // Nothing else changes — links and history survive the move.
+  assert.equal(after.kind, before.kind);
+  assert.equal(after.person_id, before.person_id);
+  assert.equal(after.task_id, before.task_id);
+  assert.equal(after.added_at, before.added_at);
+  assert.equal(after.note, before.note);
+
+  // The index reflects exactly one row at the new path.
+  const listed = runCli(['list-files', '--json'], env);
+  const rows = JSON.parse(listed.stdout).files;
+  assert.equal(rows.filter((r: { id: number }) => r.id === before.id).length, 1);
+  assert.equal(rows.find((r: { id: number }) => r.id === before.id).path, '~/hub/files/sample/panel/note.md');
+});
+
+test('S12: move-file rejects unknown id, missing--path, and bad id', (t) => {
+  const tmp = makeTmp();
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const env = { HUB_DB: join(tmp, 'life.db') };
+  seedBaseline(env);
+
+  const noPath = runCli(['move-file', '1'], env);
+  assert.equal(noPath.status, 1);
+  assert.match(noPath.stderr, /usage: hub move-file/);
+
+  const badId = runCli(['move-file', 'abc', '--path', 'x'], env);
+  assert.equal(badId.status, 1);
+  assert.match(badId.stderr, /file id argument required/);
+
+  const unknown = runCli(['move-file', '9999', '--path', '~/hub/files/new/x.pdf'], env);
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /no file with id 9999/);
+});

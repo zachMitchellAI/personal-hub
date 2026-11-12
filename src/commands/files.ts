@@ -1,4 +1,4 @@
-// File verbs: add-file, list-files. S7 — the index of durable artifacts on
+// File verbs: add-file, list-files, move-file. S7 — the index of durable artifacts on
 // disk (~/hub/files/<slug>/... by convention). The CLI stores paths as given
 // and performs NO disk I/O: the hierarchy convention is how humans/agents
 // organize files, not a write-path rule, and indexing a not-yet-existing
@@ -9,7 +9,15 @@
 import { makeDrizzle, openDb } from '../core/db.ts';
 import { files, people, tasks } from '../schema.ts';
 import { errorChainText, parseId } from '../core/util.ts';
-import type { AddFileStatus, AddFileValues, FileJson, ListFilesStatus, ListFilesValues } from '../core/types.ts';
+import type {
+  AddFileStatus,
+  AddFileValues,
+  FileJson,
+  ListFilesStatus,
+  ListFilesValues,
+  MoveFileStatus,
+  MoveFileValues,
+} from '../core/types.ts';
 import { and, eq } from 'drizzle-orm';
 
 /**
@@ -168,6 +176,55 @@ export async function cmdListFiles(values: ListFilesValues): Promise<number> {
       for (const f of outRows) {
         console.log(`${f.id}\t${f.kind}\t${f.person_id ?? '-'}\t${f.task_id ?? '-'}\t${f.path}`);
       }
+    }
+    return 0;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * `hub move-file <id> --path <p>`: re-point one file row's indexed path.
+ * Like add-file, the CLI performs NO disk I/O — the caller (human or agent)
+ * moves the artifact itself, then updates the record so the index matches
+ * the filesystem. Only the path changes: kind/person/task/added_at/note are
+ * preserved untouched, so links and history survive the move.
+ * @param values - Parsed CLI flags; --path is required.
+ * @param idArg - First positional argument: the file id.
+ * @returns Process exit code (0 = moved, 1 = usage/unknown id).
+ */
+export async function cmdMoveFile(values: MoveFileValues, idArg?: string): Promise<number> {
+  const id = parseId(idArg);
+  if (id === null) {
+    console.error('hub move-file: file id argument required');
+    return 1;
+  }
+
+  const path = values.path;
+  if (!path) {
+    console.error('hub move-file: usage: hub move-file <id> --path <p>');
+    return 1;
+  }
+
+  const { db } = openDb(values.db as string | undefined);
+  try {
+    const hub = makeDrizzle(db);
+
+    const row = await hub.select().from(files).where(eq(files.id, id)).get();
+    if (!row) {
+      console.error(`hub move-file: no file with id ${id}`);
+      return 1;
+    }
+
+    await hub.update(files).set({ path }).where(eq(files.id, id));
+    const updated: typeof row | undefined = await hub.select().from(files).where(eq(files.id, id)).get();
+    if (!updated) throw new Error('update vanished — row not found after update');
+
+    const out: MoveFileStatus = { verb: 'move-file', ...fileJson(updated) };
+    if (values.json) {
+      console.log(JSON.stringify(out, null, 2));
+    } else {
+      console.log(`moved file ${updated.id}: "${row.path}" -> "${updated.path}" (kind ${updated.kind})`);
     }
     return 0;
   } finally {

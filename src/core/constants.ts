@@ -106,6 +106,10 @@ Verbs:
                   pdf/apk/html/image/project.
   list-files      List indexed files ordered by id. Filters (combinable):
                   --person <slug>, --task <id>, --kind <k>.
+  move-file       Re-point one indexed file's path after moving the artifact
+                  on disk: hub move-file <id> --path <p>. The CLI performs
+                  NO disk I/O — the caller moves the artifact, then updates
+                  the record. All other row fields are preserved.
   log-sync        Record one sync action in the ledger: hub log-sync
                   --entity <e> --entity-id <id> --action <a> [--direction
                   <in|out>] [--adapter <a>] [--detail <d>]. direction
@@ -228,6 +232,9 @@ add-file options:
   --person <slug>          Optional person link (by slug)
   --task <id>              Optional task link (numeric id)
   --note <value>           Free-form note
+
+move-file options:
+  --path <value>           New indexed path (required) — stored as given, e.g. ~/hub/files/<slug>/x.pdf
 
 list-files options:
   --person <slug>          Only files linked to this person
