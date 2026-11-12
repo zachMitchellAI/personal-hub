@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // hub — deterministic CLI for the personal hub (the CLI core).
 // Zero npm dependencies (drizzle-orm is pure JS; adapter in db.ts bridges it
 // onto the node:sqlite connection used for pragmas/transactions).

@@ -63,6 +63,9 @@ export const PARSE_ARGS_OPTIONS = {
   k: { type: 'string' },
   mode: { type: 'string' },
   force: { type: 'boolean', default: false },
+  // install-completion: target shell and explicit destination override.
+  shell: { type: 'string' },
+  dest: { type: 'string' },
   // S12 merge-person: target slug (the surviving row).
   into: { type: 'string' },
   // S11 trello-config: the config block flags (all optional — merge semantics).
@@ -125,6 +128,8 @@ export const VERB_NAMES = [
   // S11 — Trello adapter (config surface + the one-way sync flow).
   'trello-config',
   'sync-trello',
+  // S14 — completion installer (non-DB verb, like init).
+  'install-completion',
 ] as const;
 
 /**
@@ -182,6 +187,8 @@ export const VERB_FLAGS: Record<string, readonly (keyof typeof PARSE_ARGS_OPTION
   // S13 — semantic search.
   search: ['person', 'since', 'k', 'mode'],
   'reindex-embeddings': ['force'],
+  // S14 — completion installer.
+  'install-completion': ['shell', 'dest'],
 };
 
 /**

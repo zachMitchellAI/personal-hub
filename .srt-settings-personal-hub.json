@@ -1,0 +1,56 @@
+{
+  "network": {
+    "allowedDomains": [
+      "openrouter.ai",
+      "*.openrouter.ai",
+      "models.dev",
+
+      "api.githubcopilot.com",
+      "github.com",
+      "*.github.com",
+      "*.githubusercontent.com",
+
+      "registry.npmjs.org",
+      "*.npmjs.org",
+
+      "mcp.context7.com",
+      "agenttools.wolfram.com",
+      "docs.langchain.com",
+      "reference.langchain.com",
+
+      "pypi.org",
+      "files.pythonhosted.org"
+    ],
+    "deniedDomains": [],
+    "allowAllUnixSockets": false,
+    "allowLocalBinding": false
+  },
+  "filesystem": {
+    "denyRead": [
+      "~",
+      "~/.local/bin/hub"
+    ],
+    "allowRead": [
+      "~/.config/opencode",
+      "~/.local/share/opencode",
+      "~/.cache/opencode",
+      "~/.local/state/opencode",
+      "~/.nvm",
+      "~/.local/bin",
+      "~/.gitconfig",
+      "/tmp",
+      "."
+    ],
+    "allowWrite": [
+      "~/.config/opencode",
+      "~/.local/share/opencode",
+      "~/.cache/opencode",
+      "~/.local/state/opencode",
+      "/tmp",
+      "."
+    ],
+    "denyWrite": []
+  },
+  "allowNestedUserNamespaces": false,
+  "enableWeakerNestedSandbox": false
+}

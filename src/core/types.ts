@@ -26,6 +26,20 @@ export interface InitStatus {
   ok: boolean;
 }
 
+/** `hub install-completion` result: where the completion script was copied. */
+export interface CompletionInstallStatus {
+  verb: 'install-completion';
+  /** Target shell — "bash" or "zsh". */
+  shell: string;
+  /** Generated script the copy came from (inside the package). */
+  source: string;
+  /** Where the copy now lives on disk. */
+  destination: string;
+  /** The one follow-up step for the shell (empty/no-op for bash). */
+  note: string;
+  ok: boolean;
+}
+
 /** `hub add-person --json` result for a newly created person row. */
 export interface AddPersonStatus {
   verb: 'add-person';

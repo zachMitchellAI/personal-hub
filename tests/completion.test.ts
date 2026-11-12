@@ -72,6 +72,7 @@ const ALL_VERBS = [
   'unlink-entity',
   'add-file',
   'list-files',
+  'move-file',
   'import-vcf',
   'log-sync',
   'list-sync-log',
@@ -86,6 +87,8 @@ const ALL_VERBS = [
   // S11 — Trello adapter (config surface + the one-way sync flow).
   'trello-config',
   'sync-trello',
+  // S14 — completion installer.
+  'install-completion',
 ];
 
 const ADD_VERBS = ALL_VERBS.filter((v) => v.startsWith('add-'));

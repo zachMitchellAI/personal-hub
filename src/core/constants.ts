@@ -132,6 +132,14 @@ Verbs:
                   lacking a vector row (all with --force, e.g. after a model
                   swap). Never deletes interaction rows; repairs gaps left by
                   an Ollama outage during add-interaction.
+  install-completion Wire tab-completion for hub: hub install-completion
+                  [--shell bash|zsh] [--dest <path>]. bash copies the
+                  generated script into bash-completion's lazy-load dir
+                  (~/.local/share/bash-completion/completions/hub — picked up
+                  automatically on the first hub <TAB> press; requires the
+                  bash-completion package); zsh copies it to
+                  ~/.hub/completion and prints the one source line to add
+                  to ~/.zshrc after compinit.
 
 Flags:
   --db <path>              Database path (default $HUB_DB or ~/hub/life.db)

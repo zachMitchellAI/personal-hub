@@ -29,6 +29,7 @@ import {
 } from './commands/entities.ts';
 import { cmdAddFile, cmdListFiles, cmdMoveFile } from './commands/files.ts';
 import { cmdImportVcf } from './commands/import-vcf.ts';
+import { cmdInstallCompletion } from './commands/install-completion.ts';
 import { cmdListSyncLog, cmdLogSync } from './commands/sync.ts';
 import { cmdTrelloConfig } from './commands/trello/trello-config.ts';
 import { cmdSyncTrello } from './commands/trello/sync-trello.ts';
@@ -112,4 +113,7 @@ export const VERBS: Record<string, VerbHandler> = {
   // S13 — semantic search (hybrid: SQL prefilter → vector rank).
   search: cmdSearch,
   'reindex-embeddings': cmdReindexEmbeddings,
+  // S14 — completion installer: copies the generated script into the
+  // standard per-shell location; never touches the database.
+  'install-completion': cmdInstallCompletion,
 };

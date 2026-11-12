@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Personal hub — deterministic CLI over life.db (the CLI core). One runtime dep (drizzle-orm over node:sqlite); dev tooling (typescript, prettier) is never imported by src/.",
+  "bin": "src/hub.ts",
+  "description": "Personal hub — CRM-Like system built for human agents, that's capable of managing contacts, to-do's and interactions.",
   "scripts": {
     "test": "node --test \"tests/**/*.test.ts\"",
-    "hub": "node src/hub.ts",
+    "start": "node src/hub.ts",
     "typecheck": "tsc --noEmit",
     "fmt": "prettier --write src tests",
-    "fmt:check": "prettier --check src tests"
+    "fmt:check": "prettier --check src tests",
+    "edit": "srt --settings '.srt-settings-personal-hub.json' opencode --standalone"
   },
   "engines": {
     "node": ">=24"
@@ -19,6 +21,7 @@
     "sqlite-vec": "^0.1.9"
   },
   "devDependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.82",
     "@types/node": "^24",
     "drizzle-kit": "^0.31.11",
     "omelette": "^0.4.17",

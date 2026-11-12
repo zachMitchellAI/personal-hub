@@ -29,12 +29,32 @@ npm install        # brings in devDependencies, incl. omelette
 node scripts/generate-completion.mjs
 ```
 
-## Wiring
+## Installing (bash-completion is a runtime requirement for bash)
 
-The script expects a `hub` command on your `PATH` (an alias or symlink to
-`node /path/to/personal-hub/src/hub.ts` — the repo has no install step).
+**bash**: the wiring calls `_get_comp_words_by_ref` and
+`__ltrim_colon_completions`, which ship with the **`bash-completion` package,
+not with bash itself**. Without it, `source`ing succeeds silently but the
+first `hub <TAB>` fails ("command not found" or nothing). Install it first
+(e.g. `pacman -S bash-completion`, `apt install bash-completion`,
+`brew install bash-completion`).
 
-**bash** — add to `~/.bashrc`:
+The easiest install — and the standard bash-completion mechanism — is the
+`hub install-completion` verb: it copies the script to
+`~/.local/share/bash-completion/completions/hub`, where bash-completion's
+lazy loader sources it automatically on the first `hub <TAB>` (no rc edit):
+
+```sh
+hub install-completion              # bash (default)
+hub install-completion --shell zsh  # zsh — copies to ~/.hub/completion and
+                                    # prints the source line to add
+```
+
+Or wire it by hand (older bash-completion versions, or if you prefer an
+explicit rc line). In every case the script needs a `hub` command on your
+`PATH` (e.g. the `bin` entry from a global npm install, or an alias/symlink
+to `node /path/to/personal-hub/src/hub.ts`):
+
+**bash** — add to `~/.bashrc` (after bash-completion has been sourced):
 
 ```bash
 source /path/to/personal-hub/completion/hub-completion.sh
