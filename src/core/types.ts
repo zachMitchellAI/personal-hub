@@ -323,6 +323,11 @@ export interface AddFileStatus extends FileFields {
   verb: 'add-file';
 }
 
+/** `hub move-file --json` result: the re-pointed file, echoed. */
+export interface MoveFileStatus extends FileFields {
+  verb: 'move-file';
+}
+
 /** `hub list-files --json` result. */
 export interface ListFilesStatus {
   verb: 'list-files';
@@ -668,6 +673,12 @@ export interface AddFileValues extends CliValues {
   task?: string;
   /** Free-form note; optional (nullable column). */
   note?: string;
+}
+
+/** Flags consumed by `hub move-file`. `path` is required at runtime (the handler re-checks). */
+export interface MoveFileValues extends CliValues {
+  /** New indexed path — stored as given (no disk I/O by the CLI). */
+  path?: string;
 }
 
 /** Flags consumed by `hub list-files`. All filters optional; combinable. */
