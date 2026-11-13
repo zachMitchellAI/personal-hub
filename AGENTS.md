@@ -142,3 +142,23 @@ src/
 ## Ticket completion
 
 - When finishing a ticket, avoid performing a commit right away. Commits are preferred to have human review, in case things need further adjustments. After the human reviews and gives the greenlight: commit!
+
+## PII commit gate (task #45, 2026-11-13)
+
+The repo carries a PII leak gate: `scripts/pii-gate.sh`. It is defense-in-depth
+for the 2026-10-30 incident class (real people walking into test fixtures).
+
+- **Pattern layer** (always runs): SSN/phone/email regexes, allowlist in
+  `scripts/pii-gate-allowlist.txt` — fictional fixture vocabulary only.
+- **Denylist layer** (only where `~/hub/life.db` resolves): live-built at scan
+  time from the hub DB; held in a 0600 temp file, never committed. Distinctive
+  entries only (multi-word or length >= 4) so generic words like "hub" don't
+  self-trigger.
+- **Fail-closed**: commits under `tests/` with the hub DB unreachable are
+  REFUSED, because fixtures are the highest-risk file type.
+- Output shows rule id + file:line; **matched text is never echoed** (terminal
+  scrollback is a data surface).
+- Wire it as a hook with `git config core.hooksPath scripts/githooks` — the
+  `scripts/githooks/pre-commit` wrapper invokes the gate (see scripts/githooks/).
+- CI note: gate + tests need git, bash, sqlite3 CLI — present on local dev
+  machines and GitHub ubuntu runners.
