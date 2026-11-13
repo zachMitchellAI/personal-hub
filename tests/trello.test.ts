@@ -7,26 +7,14 @@
 // ~/hub/life.db, ~/.hub/config.json, or ~/.trello-cli.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { dueMatchesCalendar } from '../src/commands/trello/sync-trello.ts';
+import { makeTmp, runHub, type RunResult } from './helpers.ts';
 
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
 const STUB_SRC = join(import.meta.dirname, 'stub-trello.mjs');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s11-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
 
 interface CardRow {
   id: string;
@@ -47,14 +35,6 @@ interface LogRow {
   entity_id: number;
   action: string;
   detail: string | null;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
 function dbQuery(dbPath: string, sql: string): unknown[] {
@@ -92,8 +72,8 @@ function harness(t: import('node:test').TestContext) {
     TRELLO_STUB_STATE: statePath,
     PATH: process.env.PATH ?? '',
   };
-  const sync = (extra: string[] = []): RunResult => runCli(['sync-trello', '--skip-cache-sync', ...extra], env);
-  const trelloConfig = (extra: string[]): RunResult => runCli(['trello-config', ...extra], env);
+  const sync = (extra: string[] = []): RunResult => runHub(['sync-trello', '--skip-cache-sync', ...extra], env);
+  const trelloConfig = (extra: string[]): RunResult => runHub(['trello-config', ...extra], env);
   const seedBoard = boardListsReadyReadyInprogressDone();
   trelloConfig([
     '--board',
@@ -108,7 +88,7 @@ function harness(t: import('node:test').TestContext) {
     enginePath,
   ]);
   const mirroredTask = (title: string): number => {
-    const r = runCli(['add-task', '--title', title, '--context', 'test', '--trello-visible', '--json'], env);
+    const r = runHub(['add-task', '--title', title, '--context', 'test', '--trello-visible', '--json'], env);
     assert.equal(r.status, 0, r.stderr);
     return (JSON.parse(r.stdout) as { id: number }).id;
   };
@@ -127,12 +107,11 @@ test('S11 cfg: save/load round-trip preserves other top-level keys and pretty-pr
   try {
     const cfgPath = join(tmp, 'config.json');
     writeFileSync(cfgPath, JSON.stringify({ owner: 'keepme', nested: { x: 1 } }, null, 2));
-    runCli; // (import guard: the CLI-level verbs are used below)
     const mod = 'unused marker'; // placeholder removed below
     void mod;
     // The trello-config verb is the save path under test.
     const env = { HUB_JSON_CONFIG: cfgPath };
-    const r = runCli(
+    const r = runHub(
       ['trello-config', '--board', 'b1', '--list-ready', 'r1', '--list-in-progress', 'i1', '--list-done', 'd1'],
       env,
     );
@@ -156,7 +135,7 @@ test('S11 cfg: trello-config merge semantics — partial invocation keeps existi
     const cfgPath = join(tmp, 'config.json');
     const env = { HUB_JSON_CONFIG: cfgPath };
     // Full write first.
-    let r = runCli(
+    let r = runHub(
       [
         'trello-config',
         '--board',
@@ -174,7 +153,7 @@ test('S11 cfg: trello-config merge semantics — partial invocation keeps existi
     );
     assert.equal(r.status, 0, r.stderr);
     // Then a PARTIAL invocation that only touches --board: everything else must survive.
-    r = runCli(['trello-config', '--board', 'bNew', '--json'], env);
+    r = runHub(['trello-config', '--board', 'bNew', '--json'], env);
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);
     assert.equal(out.verb, 'trello-config');
@@ -187,7 +166,7 @@ test('S11 cfg: trello-config merge semantics — partial invocation keeps existi
     const onDisk = JSON.parse(readFileSync(cfgPath, 'utf8'));
     assert.equal(onDisk.trello.lists.done, 'dFull');
     // No flags at all is a usage error (never a destructive rewrite).
-    r = runCli(['trello-config'], env);
+    r = runHub(['trello-config'], env);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /usage/);
   } finally {
@@ -199,7 +178,7 @@ test('S11 cfg: trello-config merge semantics — partial invocation keeps existi
 
 function seedBoardAndTasks(t: import('node:test').TestContext): ReturnType<typeof harness> {
   const h = harness(t);
-  const init = runCli(['init'], h.env);
+  const init = runHub(['init'], h.env);
   assert.equal(init.status, 0, init.stderr);
   return h;
 }
@@ -208,8 +187,8 @@ test('S11 sync: config missing → exit 1 with the trello-config hint', () => {
   const tmp = makeTmp();
   try {
     const env = { HUB_DB: join(tmp, 'life.db'), HUB_JSON_CONFIG: join(tmp, 'absent.json') };
-    runCli(['init'], env);
-    const r = runCli(['sync-trello', '--skip-cache-sync'], env);
+    runHub(['init'], env);
+    const r = runHub(['sync-trello', '--skip-cache-sync'], env);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /trello-config/);
     assert.match(r.stderr, /--board/);
@@ -222,10 +201,10 @@ test('S11 sync: config incomplete → exit 1 naming the missing flags', () => {
   const tmp = makeTmp();
   try {
     const env = { HUB_DB: join(tmp, 'life.db'), HUB_JSON_CONFIG: join(tmp, 'c.json') };
-    runCli(['init'], env);
-    const partial = runCli(['trello-config', '--board', 'bOnly'], env);
+    runHub(['init'], env);
+    const partial = runHub(['trello-config', '--board', 'bOnly'], env);
     assert.equal(partial.status, 0, partial.stderr);
-    const r = runCli(['sync-trello', '--skip-cache-sync'], env);
+    const r = runHub(['sync-trello', '--skip-cache-sync'], env);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /missing: --list-ready --list-in-progress --list-done/);
   } finally {
@@ -237,9 +216,9 @@ test('S11 sync: engine ENOENT → friendly install-trello-cli error', () => {
   const tmp = makeTmp();
   try {
     const env = { HUB_DB: join(tmp, 'life.db'), HUB_JSON_CONFIG: join(tmp, 'c.json') };
-    runCli(['init'], env);
+    runHub(['init'], env);
     // Config points at a binary name that does not exist on PATH.
-    runCli(
+    runHub(
       [
         'trello-config',
         '--board',
@@ -255,7 +234,7 @@ test('S11 sync: engine ENOENT → friendly install-trello-cli error', () => {
       ],
       env,
     );
-    const r = runCli(['sync-trello', '--skip-cache-sync'], env);
+    const r = runHub(['sync-trello', '--skip-cache-sync'], env);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /install trello-cli/);
     assert.match(r.stderr, /trello-config/);
@@ -323,7 +302,7 @@ test('S11 sync: title edit → update action + update ledger row', (t) => {
   const h = seedBoardAndTasks(t);
   const id = h.mirroredTask('Before Edit');
   assert.equal(h.sync(['--apply']).status, 0);
-  runCli(['edit-task', String(id), '--title', 'AFTER Edit'], h.env);
+  runHub(['edit-task', String(id), '--title', 'AFTER Edit'], h.env);
   const r = h.sync(['--apply']);
   assert.equal(r.status, 0, r.stderr);
   const card = stubState(h.statePath).cards[0];
@@ -336,7 +315,7 @@ test('S11 sync: status change → card moves list (move action, no dup)', (t) =>
   const h = seedBoardAndTasks(t);
   const id = h.mirroredTask('Move probe');
   assert.equal(h.sync(['--apply']).status, 0);
-  runCli(['set-task-status', String(id), '--status', 'in-progress'], h.env);
+  runHub(['set-task-status', String(id), '--status', 'in-progress'], h.env);
   const r = h.sync(['--apply']);
   assert.equal(r.status, 0, r.stderr);
   const card = stubState(h.statePath).cards[0];
@@ -351,7 +330,7 @@ test('S11 sync: completion → move to Done then archive in one run ({list: done
   const h = seedBoardAndTasks(t);
   const id = h.mirroredTask('Finish probe');
   assert.equal(h.sync(['--apply']).status, 0);
-  runCli(['set-task-status', String(id), '--status', 'completed'], h.env);
+  runHub(['set-task-status', String(id), '--status', 'completed'], h.env);
   const r = h.sync(['--apply']);
   assert.equal(r.status, 0, r.stderr);
   const [card] = stubState(h.statePath).cards;

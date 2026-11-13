@@ -11,31 +11,10 @@
 // windows, SET NULL on person delete, user_version lands at 7.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s5-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+import { fixtureInteraction, fixturePerson, interactionArgs, makeTmp, personArgs, runHub } from './helpers.ts';
 
 interface InteractionRow {
   id: number;
@@ -65,10 +44,18 @@ function rawPeople(dbPath: string): { id: number }[] {
   }
 }
 
-// Shared seed: one person "casey-smith" in a throwaway DB.
+// Fixture-pool constants (crud.test.ts pattern). Scenario 1 and the kind-
+// filter test keep their literals: kind 'interview' and the 2026-10-20 date
+// are asserted/filtered values the factory does not emit, and scenario 3's
+// dates are computed relative to today (--days boundary arithmetic).
+const P1 = fixturePerson(1); // Casey Smith — slug casey-smith
+const INTER_LONE = fixtureInteraction(0); // people-less interaction (scenario 2)
+const INTER_ORPHANED = fixtureInteraction(1); // survives its person (SET NULL test)
+
+// Shared seed: one fixture-pool person in a throwaway DB.
 function seedPerson(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
-  const add = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const add = runHub([...personArgs(P1), '--json'], env);
   assert.equal(add.status, 0, add.stderr);
   return env;
 }
@@ -81,7 +68,7 @@ test('S5: interaction logged against person persists and shows in their history'
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const add = runCli(
+  const add = runHub(
     [
       'add-interaction',
       '--kind',
@@ -93,7 +80,7 @@ test('S5: interaction logged against person persists and shows in their history'
       '--summary',
       'Panel interview with Acme',
       '--person',
-      'casey-smith',
+      P1.slug,
       '--json',
     ],
     env,
@@ -115,7 +102,7 @@ test('S5: interaction logged against person persists and shows in their history'
   assert.equal(rows[0].kind, 'interview');
 
   // The person's history query returns it.
-  const history = runCli(['list-interactions', '--person', 'casey-smith', '--json'], env);
+  const history = runHub(['list-interactions', '--person', P1.slug, '--json'], env);
   assert.equal(history.status, 0, history.stderr);
   const listed = JSON.parse(history.stdout);
   assert.equal(listed.verb, 'list-interactions');
@@ -131,27 +118,13 @@ test('S5: interaction with no person_id persists', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const add = runCli(
-    [
-      'add-interaction',
-      '--kind',
-      'meeting',
-      '--date',
-      '2026-10-19',
-      '--channel',
-      'in-person',
-      '--summary',
-      'Coffee chat re: side project',
-      '--json',
-    ],
-    env,
-  );
+  const add = runHub([...interactionArgs(INTER_LONE), '--json'], env);
   assert.equal(add.status, 0, add.stderr);
   const added = JSON.parse(add.stdout);
   assert.equal(added.person_id, null, 'omitting --person leaves person_id null');
 
   // It shows in the unfiltered list with person_id null.
-  const all = runCli(['list-interactions', '--json'], env);
+  const all = runHub(['list-interactions', '--json'], env);
   assert.equal(all.status, 0, all.stderr);
   const listed = JSON.parse(all.stdout);
   assert.equal(listed.count, 1);
@@ -172,12 +145,12 @@ test('S5: --days window filters old rows; results ordered by date descending', (
   const d10 = dayOffset(10);
 
   // Insert out of date order on purpose — ordering must come from the query.
-  const a = runCli(
+  const a = runHub(
     ['add-interaction', '--kind', 'call', '--date', d3, '--channel', 'discord', '--summary', 'Discord call', '--json'],
     env,
   );
   assert.equal(a.status, 0, a.stderr);
-  const b = runCli(
+  const b = runHub(
     [
       'add-interaction',
       '--kind',
@@ -193,13 +166,13 @@ test('S5: --days window filters old rows; results ordered by date descending', (
     env,
   );
   assert.equal(b.status, 0, b.stderr);
-  const c = runCli(
+  const c = runHub(
     ['add-interaction', '--kind', 'email', '--date', d10, '--channel', 'email', '--summary', 'Old thread', '--json'],
     env,
   );
   assert.equal(c.status, 0, c.stderr);
 
-  const week = runCli(['list-interactions', '--days', '7', '--json'], env);
+  const week = runHub(['list-interactions', '--days', '7', '--json'], env);
   assert.equal(week.status, 0, week.stderr);
   const weekList = JSON.parse(week.stdout);
   assert.equal(weekList.verb, 'list-interactions');
@@ -215,7 +188,7 @@ test('S5: --days window filters old rows; results ordered by date descending', (
   );
 
   // The full list is also date descending, ties by id descending.
-  const all = runCli(['list-interactions', '--json'], env);
+  const all = runHub(['list-interactions', '--json'], env);
   const allList = JSON.parse(all.stdout);
   assert.deepEqual(
     allList.interactions.map((r: InteractionRow) => r.date),
@@ -223,7 +196,7 @@ test('S5: --days window filters old rows; results ordered by date descending', (
   );
 
   // --since window: everything on/after d3.
-  const sinceList = JSON.parse(runCli(['list-interactions', '--since', d3, '--json'], env).stdout);
+  const sinceList = JSON.parse(runHub(['list-interactions', '--since', d3, '--json'], env).stdout);
   assert.equal(sinceList.since, d3);
   assert.deepEqual(
     sinceList.interactions.map((r: InteractionRow) => r.date),
@@ -239,21 +212,21 @@ test('S5: --kind filter and error paths exit 1 with usage messages', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  runCli(
+  runHub(
     ['add-interaction', '--kind', 'interview', '--date', '2026-10-20', '--channel', 'phone', '--summary', 'A'],
     env,
   );
-  runCli(['add-interaction', '--kind', 'email', '--date', '2026-10-21', '--channel', 'email', '--summary', 'B'], env);
+  runHub(['add-interaction', '--kind', 'email', '--date', '2026-10-21', '--channel', 'email', '--summary', 'B'], env);
 
-  const interviews = JSON.parse(runCli(['list-interactions', '--kind', 'interview', '--json'], env).stdout);
+  const interviews = JSON.parse(runHub(['list-interactions', '--kind', 'interview', '--json'], env).stdout);
   assert.equal(interviews.count, 1);
   assert.equal(interviews.interactions[0].kind, 'interview');
 
   // Unknown person slug → clean usage error.
-  const unknown = runCli(['list-interactions', '--person', 'nobody-here'], env);
+  const unknown = runHub(['list-interactions', '--person', 'nobody-here'], env);
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /no person with slug "nobody-here"/);
-  const unknownAdd = runCli(
+  const unknownAdd = runHub(
     [
       'add-interaction',
       '--kind',
@@ -273,12 +246,12 @@ test('S5: --kind filter and error paths exit 1 with usage messages', (t) => {
   assert.match(unknownAdd.stderr, /no person with slug "nobody-here"/);
 
   // Missing required flags → usage error.
-  const missing = runCli(['add-interaction', '--kind', 'call'], env);
+  const missing = runHub(['add-interaction', '--kind', 'call'], env);
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /usage: hub add-interaction/);
 
   // Fuzzy date → rejected (deterministic dates only).
-  const fuzzy = runCli(
+  const fuzzy = runHub(
     ['add-interaction', '--kind', 'call', '--date', 'next friday', '--channel', 'phone', '--summary', 'x'],
     env,
   );
@@ -286,20 +259,20 @@ test('S5: --kind filter and error paths exit 1 with usage messages', (t) => {
   assert.match(fuzzy.stderr, /must be an ISO date/);
 
   // Impossible calendar date → rejected.
-  const impossible = runCli(
+  const impossible = runHub(
     ['add-interaction', '--kind', 'call', '--date', '2026-02-30', '--channel', 'phone', '--summary', 'x'],
     env,
   );
   assert.equal(impossible.status, 1);
 
   // Bad --days → rejected.
-  const badDays = runCli(['list-interactions', '--days', 'abc'], env);
+  const badDays = runHub(['list-interactions', '--days', 'abc'], env);
   assert.equal(badDays.status, 1);
   assert.match(badDays.stderr, /must be a positive integer/);
-  const zeroDays = runCli(['list-interactions', '--days', '0'], env);
+  const zeroDays = runHub(['list-interactions', '--days', '0'], env);
   assert.equal(zeroDays.status, 1);
   // Bad --since → rejected.
-  const badSince = runCli(['list-interactions', '--since', 'tomorrow'], env);
+  const badSince = runHub(['list-interactions', '--since', 'tomorrow'], env);
   assert.equal(badSince.status, 1);
 });
 
@@ -311,29 +284,13 @@ test('S5: person delete SET NULLs interaction.person_id', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const add = runCli(
-    [
-      'add-interaction',
-      '--kind',
-      'interview',
-      '--date',
-      '2026-10-20',
-      '--channel',
-      'phone',
-      '--summary',
-      'Panel',
-      '--person',
-      'casey-smith',
-      '--json',
-    ],
-    env,
-  );
+  const add = runHub([...interactionArgs(INTER_ORPHANED), '--person', P1.slug, '--json'], env);
   assert.equal(add.status, 0, add.stderr);
 
   const db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA foreign_keys = ON');
-    db.prepare('DELETE FROM people WHERE slug = ?').run('casey-smith');
+    db.prepare('DELETE FROM people WHERE slug = ?').run(P1.slug);
   } finally {
     db.close();
   }

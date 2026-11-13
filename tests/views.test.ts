@@ -17,32 +17,19 @@
 // every S8 index exists by name.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { latestNonGatedMigrationVersion } from './helpers.ts';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s8-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+import {
+  channelArgs,
+  fixtureChannel,
+  fixturePerson,
+  fixtureTask,
+  latestNonGatedMigrationVersion,
+  makeTmp,
+  runHub,
+  taskArgs,
+} from './helpers.ts';
 
 /** A person_full view row — channels/interactions arrive as JSON text. */
 interface PersonFullRow {
@@ -78,79 +65,41 @@ function rawViewRows(dbPath: string, view: string): Record<string, unknown>[] {
   }
 }
 
+const P1 = fixturePerson(1); // Casey Smith / Sample Holdings
+const SOLO = fixturePerson(5); // Morgan Placeholder — the channels-less person
+const EMAIL_CHANNEL = fixtureChannel(0);
+
 // Shared seed: one person + the six-task mirror dataset (four in the mirror,
 // two excluded: one completed-but-visible, one ready-but-hidden).
 function seedMirrorDataset(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
-  const person = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const person = runHub(['add-person', '--name', P1.name, '--json'], env);
   assert.equal(person.status, 0, person.stderr);
 
   // In the mirror: dated, newest due first.
-  const datedEarly = runCli(
-    [
-      'add-task',
-      '--title',
-      'Follow up Acme',
-      '--context',
-      'job-hunt',
-      '--trello-visible',
-      '--due-date',
-      '2026-10-20',
-      '--json',
-    ],
+  const datedEarly = runHub(
+    [...taskArgs(fixtureTask(0)), '--trello-visible', '--due-date', '2026-10-20', '--json'],
     env,
   );
   assert.equal(datedEarly.status, 0, datedEarly.stderr);
-  const datedLate = runCli(
-    [
-      'add-task',
-      '--title',
-      'Prep interview',
-      '--context',
-      'job-hunt',
-      '--trello-visible',
-      '--due-date',
-      '2026-10-25',
-      '--json',
-    ],
+  const datedLate = runHub(
+    [...taskArgs(fixtureTask(1)), '--trello-visible', '--due-date', '2026-10-25', '--json'],
     env,
   );
   assert.equal(datedLate.status, 0, datedLate.stderr);
   // In the mirror: undated — sort last, after the dated ones.
-  const undated1 = runCli(
-    ['add-task', '--title', 'Message rec', '--context', 'discord', '--trello-visible', '--json'],
-    env,
-  );
+  const undated1 = runHub([...taskArgs(fixtureTask(2)), '--trello-visible', '--json'], env);
   assert.equal(undated1.status, 0, undated1.stderr);
-  const undated2 = runCli(
-    [
-      'add-task',
-      '--title',
-      'Draft cover letter',
-      '--context',
-      'job-hunt',
-      '--status',
-      'in-progress',
-      '--trello-visible',
-      '--json',
-    ],
-    env,
-  );
+  const undated2 = runHub([...taskArgs(fixtureTask(3)), '--status', 'in-progress', '--trello-visible', '--json'], env);
   assert.equal(undated2.status, 0, undated2.stderr);
   // Excluded: completed but visible.
-  const completed = runCli(
-    ['add-task', '--title', 'Old chore', '--context', 'home', '--trello-visible', '--json'],
-    env,
-  );
+  const completed = runHub([...taskArgs(fixtureTask(4)), '--trello-visible', '--json'], env);
   assert.equal(completed.status, 0, completed.stderr);
   const completedId = JSON.parse(completed.stdout).id as number;
-  const done = runCli(['set-task-status', String(completedId), '--status', 'completed', '--json'], env);
+  const done = runHub(['set-task-status', String(completedId), '--status', 'completed', '--json'], env);
   assert.equal(done.status, 0, done.stderr);
   // Excluded: ready but not Trello-visible.
-  const hidden = runCli(
-    ['add-task', '--title', 'Hidden task', '--context', 'discord', '--due-date', '2026-10-23', '--json'],
-    env,
-  );
+  const hidden = runHub([...taskArgs(fixtureTask(5)), '--due-date', '2026-10-23', '--json'], env);
   assert.equal(hidden.status, 0, hidden.stderr);
 
   return env;
@@ -176,7 +125,7 @@ test('S8: view active_tasks returns exactly the mirror set ordered due_date NULL
 
   // Set equality with the S4 CLI mirror query — the view and list-tasks
   // --mirror must never disagree about what "the mirror set" is.
-  const mirror = runCli(['list-tasks', '--mirror', '--json'], { HUB_DB: dbPath });
+  const mirror = runHub(['list-tasks', '--mirror', '--json'], { HUB_DB: dbPath });
   assert.equal(mirror.status, 0, mirror.stderr);
   const mirrorIds = (JSON.parse(mirror.stdout).tasks as { id: number }[]).map((r) => r.id).sort((a, b) => a - b);
   const viewIds = rows.map((r) => r.id as number).sort((a, b) => a - b);
@@ -191,26 +140,23 @@ test('S8: view person_full aggregates channels + recent interactions; empty pers
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
 
-  const casey = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const casey = runHub(['add-person', '--name', P1.name, '--json'], env);
   assert.equal(casey.status, 0, casey.stderr);
-  const solo = runCli(['add-person', '--name', 'Solo Person', '--json'], env);
+  const solo = runHub(['add-person', '--name', SOLO.name, '--json'], env);
   assert.equal(solo.status, 0, solo.stderr);
 
   // Channels: email gets --primary (primary_flag=1), mastodon plain. The view
   // must order by kind, then id — email before mastodon.
-  const email = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'casey@acme.co', '--primary', '--json'],
-    env,
-  );
+  const email = runHub([...channelArgs(P1.slug, EMAIL_CHANNEL), '--primary', '--json'], env);
   assert.equal(email.status, 0, email.stderr);
-  const mastodon = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'mastodon', '--value', '@casey', '--source', 'imported', '--json'],
+  const mastodon = runHub(
+    ['add-channel', P1.slug, '--kind', 'mastodon', '--value', '@casey', '--source', 'imported', '--json'],
     env,
   );
   assert.equal(mastodon.status, 0, mastodon.stderr);
 
   // Interactions for casey: deliberately out of chronological insertion order.
-  const i1 = runCli(
+  const i1 = runHub(
     [
       'add-interaction',
       '--kind',
@@ -222,13 +168,13 @@ test('S8: view person_full aggregates channels + recent interactions; empty pers
       '--summary',
       'Intro call',
       '--person',
-      'casey-smith',
+      P1.slug,
       '--json',
     ],
     env,
   );
   assert.equal(i1.status, 0, i1.stderr);
-  const i2 = runCli(
+  const i2 = runHub(
     [
       'add-interaction',
       '--kind',
@@ -240,13 +186,13 @@ test('S8: view person_full aggregates channels + recent interactions; empty pers
       '--summary',
       'Onsite loop',
       '--person',
-      'casey-smith',
+      P1.slug,
       '--json',
     ],
     env,
   );
   assert.equal(i2.status, 0, i2.stderr);
-  const i3 = runCli(
+  const i3 = runHub(
     [
       'add-interaction',
       '--kind',
@@ -258,14 +204,14 @@ test('S8: view person_full aggregates channels + recent interactions; empty pers
       '--summary',
       'Thank-you note',
       '--person',
-      'casey-smith',
+      P1.slug,
       '--json',
     ],
     env,
   );
   assert.equal(i3.status, 0, i3.stderr);
   // Person-less interaction — valid data, but never attributed to casey.
-  const orphan = runCli(
+  const orphan = runHub(
     [
       'add-interaction',
       '--kind',
@@ -286,12 +232,12 @@ test('S8: view person_full aggregates channels + recent interactions; empty pers
   assert.equal(rows.length, 2, 'one person_full row per person');
   assert.deepEqual(
     rows.map((r) => r.slug),
-    ['casey-smith', 'solo-person'],
+    [P1.slug, SOLO.slug],
     'view sorts people by slug',
   );
 
   const caseyRow = rows[0];
-  assert.equal(caseyRow.display_name, 'Casey Smith');
+  assert.equal(caseyRow.display_name, P1.name);
 
   // Channels: (kind, id) order — email first, mastodon second; primary_flag
   // and source ride along inside the JSON objects.
@@ -336,12 +282,12 @@ test('S8: person_full recent interactions cap at the 5 newest per person', (t) =
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
-  const person = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const person = runHub(['add-person', '--name', P1.name, '--json'], env);
   assert.equal(person.status, 0, person.stderr);
 
   const dates = ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07'];
   for (const date of dates) {
-    const add = runCli(
+    const add = runHub(
       [
         'add-interaction',
         '--kind',
@@ -353,7 +299,7 @@ test('S8: person_full recent interactions cap at the 5 newest per person', (t) =
         '--summary',
         `Call ${date}`,
         '--person',
-        'casey-smith',
+        P1.slug,
         '--json',
       ],
       env,
@@ -382,12 +328,12 @@ test('S8: EXPLAIN QUERY PLAN on slug lookup uses people_slug_unique — no full 
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
-  const person = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const person = runHub(['add-person', '--name', P1.name, '--json'], env);
   assert.equal(person.status, 0, person.stderr);
 
   const db = new DatabaseSync(dbPath);
   try {
-    const plan = db.prepare("EXPLAIN QUERY PLAN SELECT * FROM people WHERE slug = 'casey-smith'").all() as {
+    const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM people WHERE slug = '${P1.slug}'`).all() as {
       detail: string;
     }[];
     const detail = plan.map((p) => p.detail).join(' | ');
@@ -407,7 +353,7 @@ test('S8: fresh init lands at user_version 7+ with the S8 indexes and views', (t
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = { HUB_DB: join(tmp, 'life.db') };
-  const init = runCli(['init', '--json'], env);
+  const init = runHub(['init', '--json'], env);
   assert.equal(init.status, 0, init.stderr);
   const applied = JSON.parse(init.stdout).migrations_applied as number[];
   assert.deepEqual(applied.slice(0, 7), [1, 2, 3, 4, 5, 6, 7], 'S1–S8 migrations must apply in order');

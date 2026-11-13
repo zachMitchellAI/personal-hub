@@ -1,10 +1,10 @@
 // S7 acceptance tests (stories/epic-schema.md S7) — CLI-level against
 // throwaway DBs, per DECISIONS #15. Never touches ~/hub/life.db.
 // Scenario map:
-//   1. entity "vibe-coded dreams" kind "concept" linked to a task AND a
-//      person → both links resolve via target_type+target_id
-//   2. file "~/hub/files/interview-prep/acme-corp.pdf" indexed against
-//      person casey-smith → files row resolves to that person
+//   1. a fixture entity (fixtureEntity) linked to a task AND a person → both
+//      links resolve via target_type+target_id
+//   2. a fixture file (fixtureFile) indexed against person casey-smith →
+//      files row resolves to that person
 //   3. sync run moving 3 tasks to Trello → 3 sync_log rows direction
 //      "out", adapter "trello-cli", with timestamps — re-run adds no rows
 //      (idempotency contract)
@@ -13,31 +13,21 @@
 // entities, empty-list results valid, user_version lands at 7.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s7-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+import {
+  entityArgs,
+  fileArgs,
+  fixtureEntity,
+  fixtureFile,
+  fixturePerson,
+  fixtureTask,
+  makeTmp,
+  runHub,
+  slugFor,
+  taskArgs,
+} from './helpers.ts';
 
 interface EntityJson {
   id: number;
@@ -96,15 +86,18 @@ function rawSyncLog(dbPath: string): SyncLogJson[] {
   }
 }
 
+const P1 = fixturePerson(1); // Casey Smith / Sample Holdings
+const TASK = fixtureTask(0);
+
 // Seed helper: init + one person + one task, returning their ids/slugs.
 // Every scenario starts from this baseline so link/file targets exist.
 function seedBaseline(env: Record<string, string>): { personSlug: string; taskId: number } {
-  const init = runCli(['init'], env);
+  const init = runHub(['init'], env);
   assert.equal(init.status, 0, init.stderr);
-  const person = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const person = runHub(['add-person', '--name', P1.name, '--json'], env);
   assert.equal(person.status, 0, person.stderr);
   const personJson = JSON.parse(person.stdout) as { slug: string };
-  const task = runCli(['add-task', '--title', 'prepanel research', '--context', 'job-hunt', '--json'], env);
+  const task = runHub([...taskArgs(TASK), '--json'], env);
   assert.equal(task.status, 0, task.stderr);
   const taskJson = JSON.parse(task.stdout) as { id: number };
   return { personSlug: personJson.slug, taskId: taskJson.id };
@@ -121,28 +114,20 @@ test('S7: entity links to a task and a person both resolve', (t) => {
   const env = { HUB_DB: dbPath };
   const base = seedBaseline(env);
 
-  const add = runCli(
-    [
-      'add-entity',
-      '--label',
-      'vibe-coded dreams',
-      '--kind',
-      'concept',
-      '--content',
-      'an afternoon of letting the agent drive',
-      '--json',
-    ],
+  const entitySpec = fixtureEntity(0); // Acme Corp / company
+  const add = runHub(
+    [...entityArgs(entitySpec), '--content', 'an afternoon of letting the agent drive', '--json'],
     env,
   );
   assert.equal(add.status, 0, add.stderr);
   const entity = JSON.parse(add.stdout) as EntityJson;
-  assert.equal(entity.label, 'vibe-coded dreams');
-  assert.equal(entity.kind, 'concept');
-  assert.equal(entity.slug, 'vibe-coded-dreams');
+  assert.equal(entity.label, entitySpec.label);
+  assert.equal(entity.kind, entitySpec.kind);
+  assert.equal(entity.slug, slugFor(entitySpec.label));
   assert.match(entity.created_at, /^\d{4}-\d{2}-\d{2}T/);
 
   // Link #1 → task (target by numeric id).
-  const linkTask = runCli(
+  const linkTask = runHub(
     [
       'link-entity',
       entity.slug,
@@ -161,11 +146,11 @@ test('S7: entity links to a task and a person both resolve', (t) => {
   assert.equal(taskLink.entity_id, entity.id);
   assert.equal(taskLink.target_type, 'task');
   assert.equal(taskLink.target_id, base.taskId);
-  assert.equal(taskLink.target_label, 'prepanel research');
+  assert.equal(taskLink.target_label, TASK.title);
   assert.equal(taskLink.note, 'research for the panel');
 
   // Link #2 → person (target by slug; CLI resolves to the row id).
-  const linkPerson = runCli(
+  const linkPerson = runHub(
     ['link-entity', entity.slug, '--target-type', 'person', '--target', base.personSlug, '--json'],
     env,
   );
@@ -173,18 +158,18 @@ test('S7: entity links to a task and a person both resolve', (t) => {
   const personLink = JSON.parse(linkPerson.stdout) as EntityLinkJson;
   assert.equal(personLink.target_type, 'person');
   assert.equal(personLink.target_id, 1, 'person slug must resolve to the person row id');
-  assert.equal(personLink.target_label, 'Casey Smith');
+  assert.equal(personLink.target_label, P1.name);
 
   // Both links resolve via target_type+target_id in the list output.
-  const list = runCli(['list-entity-links', entity.slug, '--json'], env);
+  const list = runHub(['list-entity-links', entity.slug, '--json'], env);
   assert.equal(list.status, 0, list.stderr);
   const listed = JSON.parse(list.stdout) as { count: number; links: EntityLinkJson[] };
   assert.equal(listed.count, 2);
   const byType = Object.fromEntries(listed.links.map((l) => [l.target_type, l]));
   assert.equal(byType.task.target_id, base.taskId);
-  assert.equal(byType.task.target_label, 'prepanel research');
+  assert.equal(byType.task.target_label, TASK.title);
   assert.equal(byType.person.target_id, 1);
-  assert.equal(byType.person.target_label, 'Casey Smith');
+  assert.equal(byType.person.target_label, P1.name);
 
   // Raw DB: the two rows persist with the polymorphic columns intact.
   const raw = rawEntityLinks(dbPath);
@@ -205,38 +190,28 @@ test('S7: file indexed against a person resolves to that person', (t) => {
   const env = { HUB_DB: dbPath };
   const base = seedBaseline(env);
 
-  const add = runCli(
-    [
-      'add-file',
-      '--path',
-      '~/hub/files/interview-prep/acme-corp.pdf',
-      '--kind',
-      'pdf',
-      '--person',
-      base.personSlug,
-      '--note',
-      'resume tailored for the panel',
-      '--json',
-    ],
+  const fileSpec = fixtureFile(0);
+  const add = runHub(
+    [...fileArgs(fileSpec), '--person', base.personSlug, '--note', 'resume tailored for the panel', '--json'],
     env,
   );
   assert.equal(add.status, 0, add.stderr);
   const file = JSON.parse(add.stdout) as FileJson;
-  assert.equal(file.path, '~/hub/files/interview-prep/acme-corp.pdf');
-  assert.equal(file.kind, 'pdf');
+  assert.equal(file.path, fileSpec.path);
+  assert.equal(file.kind, fileSpec.kind);
   assert.equal(file.person_id, 1, 'the person slug must resolve to the person row id');
   assert.equal(file.task_id, null);
   assert.match(file.added_at, /^\d{4}-\d{2}-\d{2}T/);
   assert.equal(file.note, 'resume tailored for the panel');
 
   // list-files --person resolves through the stored row (id → slug filter).
-  const list = runCli(['list-files', '--person', base.personSlug, '--json'], env);
+  const list = runHub(['list-files', '--person', base.personSlug, '--json'], env);
   assert.equal(list.status, 0, list.stderr);
   const listed = JSON.parse(list.stdout) as { count: number; files: FileJson[] };
   assert.equal(listed.count, 1);
   assert.equal(listed.files[0].id, file.id);
   assert.equal(listed.files[0].person_id, 1);
-  assert.equal(listed.files[0].path, '~/hub/files/interview-prep/acme-corp.pdf');
+  assert.equal(listed.files[0].path, fileSpec.path);
 });
 
 // Scenario 3 — sync ledger: 3 task moves → 3 "out"/"trello-cli" rows with
@@ -251,16 +226,16 @@ test('S7: sync run logs 3 trello moves; re-run adds no rows (idempotency)', (t) 
   seedBaseline(env);
 
   // Two more tasks → three total to "move" in the simulated sync run.
-  const t2 = runCli(['add-task', '--title', 'second task', '--context', 'job-hunt', '--json'], env);
+  const t2 = runHub([...taskArgs(fixtureTask(1)), '--json'], env);
   assert.equal(t2.status, 0, t2.stderr);
-  const t3 = runCli(['add-task', '--title', 'third task', '--context', 'job-hunt', '--json'], env);
+  const t3 = runHub([...taskArgs(fixtureTask(2)), '--json'], env);
   assert.equal(t3.status, 0, t3.stderr);
   const taskIds = [1, JSON.parse(t2.stdout).id, JSON.parse(t3.stdout).id].sort((a, b) => a - b);
   assert.deepEqual(taskIds, [1, 2, 3]);
 
   // The sync run: one log-sync per task move ("out" is the default direction).
   for (const id of taskIds) {
-    const log = runCli(
+    const log = runHub(
       [
         'log-sync',
         '--entity',
@@ -279,7 +254,7 @@ test('S7: sync run logs 3 trello moves; re-run adds no rows (idempotency)', (t) 
   }
 
   // Ledger query: 3 rows, direction "out", adapter "trello-cli", timestamps.
-  const list1 = runCli(['list-sync-log', '--json'], env);
+  const list1 = runHub(['list-sync-log', '--json'], env);
   assert.equal(list1.status, 0, list1.stderr);
   const first = JSON.parse(list1.stdout) as { count: number; entries: SyncLogJson[] };
   assert.equal(first.count, 3);
@@ -301,7 +276,7 @@ test('S7: sync run logs 3 trello moves; re-run adds no rows (idempotency)', (t) 
 
   // Re-run the exact same sync actions → no new rows, exit 0, "already logged".
   for (const id of taskIds) {
-    const rerun = runCli(
+    const rerun = runHub(
       [
         'log-sync',
         '--entity',
@@ -318,7 +293,7 @@ test('S7: sync run logs 3 trello moves; re-run adds no rows (idempotency)', (t) 
     assert.equal(rerun.status, 0, rerun.stderr);
     assert.match(rerun.stdout, /already logged/, 'the re-run must be recognized as a no-op');
   }
-  const list2 = runCli(['list-sync-log', '--json'], env);
+  const list2 = runHub(['list-sync-log', '--json'], env);
   assert.equal(list2.status, 0, list2.stderr);
   const second = JSON.parse(list2.stdout) as { count: number };
   assert.equal(second.count, 3, 're-running the sync must not duplicate ledger rows');
@@ -334,19 +309,19 @@ test('S7: slug derivation and uniqueness on entities', (t) => {
   const env = { HUB_DB: join(tmp, 'life.db') };
   seedBaseline(env);
 
-  const add = runCli(['add-entity', '--label', 'Vibe Coded Dreams!', '--kind', 'concept', '--json'], env);
+  const add = runHub(['add-entity', '--label', 'Vibe Coded Dreams!', '--kind', 'concept', '--json'], env);
   assert.equal(add.status, 0, add.stderr);
   const entity = JSON.parse(add.stdout) as EntityJson;
   assert.equal(entity.slug, 'vibe-coded-dreams', 'slug is derived: lowercase, spaces/punct → dashes');
 
   // Same label again → same slug → UNIQUE constraint → friendly error.
-  const dup = runCli(['add-entity', '--label', 'Vibe Coded Dreams', '--kind', 'concept', '--json'], env);
+  const dup = runHub(['add-entity', '--label', 'Vibe Coded Dreams', '--kind', 'concept', '--json'], env);
   assert.equal(dup.status, 1);
   assert.match(dup.stderr, /entities_slug_unique|already exists/);
   assert.doesNotMatch(dup.stderr, /DrizzleQueryError|SqliteError/, 'driver internals must never leak to the user');
 
   // An explicit --slug override that collides fails the same way.
-  const dupOverride = runCli(
+  const dupOverride = runHub(
     ['add-entity', '--label', 'Different Label', '--kind', 'concept', '--slug', 'vibe-coded-dreams', '--json'],
     env,
   );
@@ -365,7 +340,7 @@ test('S7: entity_links FK behavior — unknown entity or target errors cleanly',
   const base = seedBaseline(env);
 
   // Unknown entity slug → usage error, not a driver crash.
-  const noEntity = runCli(
+  const noEntity = runHub(
     ['link-entity', 'no-such-entity', '--target-type', 'task', '--target', String(base.taskId), '--json'],
     env,
   );
@@ -374,16 +349,16 @@ test('S7: entity_links FK behavior — unknown entity or target errors cleanly',
   assert.doesNotMatch(noEntity.stderr, /DrizzleQueryError|SqliteError/);
 
   // Valid entity, unknown target (nonexistent task id) → usage error.
-  const add = runCli(['add-entity', '--label', 'Orphan Watch', '--kind', 'concept', '--json'], env);
+  const add = runHub([...entityArgs(fixtureEntity(2)), '--json'], env);
   assert.equal(add.status, 0, add.stderr);
   const orphan = JSON.parse(add.stdout) as EntityJson;
-  const noTask = runCli(['link-entity', orphan.slug, '--target-type', 'task', '--target', '9999', '--json'], env);
+  const noTask = runHub(['link-entity', orphan.slug, '--target-type', 'task', '--target', '9999', '--json'], env);
   assert.equal(noTask.status, 1);
   assert.match(noTask.stderr, /no task matching "9999"/);
   assert.doesNotMatch(noTask.stderr, /DrizzleQueryError|SqliteError/);
 
   // Valid entity, unknown person slug → usage error.
-  const noPerson = runCli(
+  const noPerson = runHub(
     ['link-entity', orphan.slug, '--target-type', 'person', '--target', 'nobody-here', '--json'],
     env,
   );
@@ -391,7 +366,7 @@ test('S7: entity_links FK behavior — unknown entity or target errors cleanly',
   assert.match(noPerson.stderr, /no person matching "nobody-here"/);
 
   // Unknown target_type → usage error (types are data but the CLI narrows).
-  const badType = runCli(['link-entity', orphan.slug, '--target-type', 'car', '--target', '1', '--json'], env);
+  const badType = runHub(['link-entity', orphan.slug, '--target-type', 'car', '--target', '1', '--json'], env);
   assert.equal(badType.status, 1);
   assert.match(badType.stderr, /target-type must be one of/);
 });
@@ -405,7 +380,7 @@ test('S7: files FK behavior — unknown person or task errors cleanly', (t) => {
   const env = { HUB_DB: join(tmp, 'life.db') };
   seedBaseline(env);
 
-  const noPerson = runCli(
+  const noPerson = runHub(
     ['add-file', '--path', '~/hub/files/x.pdf', '--kind', 'pdf', '--person', 'no-such-person', '--json'],
     env,
   );
@@ -413,7 +388,7 @@ test('S7: files FK behavior — unknown person or task errors cleanly', (t) => {
   assert.match(noPerson.stderr, /no person with slug "no-such-person"/);
   assert.doesNotMatch(noPerson.stderr, /DrizzleQueryError|SqliteError/);
 
-  const noTask = runCli(['add-file', '--path', '~/hub/files/x.pdf', '--kind', 'pdf', '--task', '9999', '--json'], env);
+  const noTask = runHub(['add-file', '--path', '~/hub/files/x.pdf', '--kind', 'pdf', '--task', '9999', '--json'], env);
   assert.equal(noTask.status, 1);
   assert.match(noTask.stderr, /no task with id 9999/);
 });
@@ -424,17 +399,17 @@ test('S7: empty list results are valid', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = { HUB_DB: join(tmp, 'life.db') };
-  const init = runCli(['init'], env);
+  const init = runHub(['init'], env);
   assert.equal(init.status, 0, init.stderr);
 
-  const entities = runCli(['list-entities', '--json'], env);
+  const entities = runHub(['list-entities', '--json'], env);
   assert.equal(entities.status, 0, entities.stderr);
   const eOut = JSON.parse(entities.stdout) as { verb: string; count: number; entities: unknown[] };
   assert.equal(eOut.verb, 'list-entities');
   assert.equal(eOut.count, 0);
   assert.deepEqual(eOut.entities, []);
 
-  const sync = runCli(['list-sync-log', '--json'], env);
+  const sync = runHub(['list-sync-log', '--json'], env);
   assert.equal(sync.status, 0, sync.stderr);
   const sOut = JSON.parse(sync.stdout) as { verb: string; count: number; entries: unknown[] };
   assert.equal(sOut.verb, 'list-sync-log');
@@ -449,7 +424,7 @@ test('S7: fresh init lands at user_version 7+', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = { HUB_DB: join(tmp, 'life.db') };
-  const init = runCli(['init'], env);
+  const init = runHub(['init'], env);
   assert.equal(init.status, 0, init.stderr);
 
   const db = new DatabaseSync(join(tmp, 'life.db'));
@@ -477,11 +452,11 @@ test('S12: move-file re-points path and preserves all other fields', (t) => {
   const env = { HUB_DB: join(tmp, 'life.db') };
   seedBaseline(env);
 
-  const added = runCli(['add-file', '--path', '~/hub/files/sample-panel/note.md', '--kind', 'markdown', '--json'], env);
+  const added = runHub([...fileArgs(fixtureFile(0)), '--json'], env);
   assert.equal(added.status, 0, added.stderr);
   const before = JSON.parse(added.stdout);
 
-  const moved = runCli(['move-file', String(before.id), '--path', '~/hub/files/sample/panel/note.md', '--json'], env);
+  const moved = runHub(['move-file', String(before.id), '--path', '~/hub/files/sample/panel/note.md', '--json'], env);
   assert.equal(moved.status, 0, moved.stderr);
   const after = JSON.parse(moved.stdout);
   assert.equal(after.verb, 'move-file');
@@ -495,7 +470,7 @@ test('S12: move-file re-points path and preserves all other fields', (t) => {
   assert.equal(after.note, before.note);
 
   // The index reflects exactly one row at the new path.
-  const listed = runCli(['list-files', '--json'], env);
+  const listed = runHub(['list-files', '--json'], env);
   const rows = JSON.parse(listed.stdout).files;
   assert.equal(rows.filter((r: { id: number }) => r.id === before.id).length, 1);
   assert.equal(rows.find((r: { id: number }) => r.id === before.id).path, '~/hub/files/sample/panel/note.md');
@@ -507,15 +482,15 @@ test('S12: move-file rejects unknown id, missing--path, and bad id', (t) => {
   const env = { HUB_DB: join(tmp, 'life.db') };
   seedBaseline(env);
 
-  const noPath = runCli(['move-file', '1'], env);
+  const noPath = runHub(['move-file', '1'], env);
   assert.equal(noPath.status, 1);
   assert.match(noPath.stderr, /usage: hub move-file/);
 
-  const badId = runCli(['move-file', 'abc', '--path', 'x'], env);
+  const badId = runHub(['move-file', 'abc', '--path', 'x'], env);
   assert.equal(badId.status, 1);
   assert.match(badId.stderr, /file id argument required/);
 
-  const unknown = runCli(['move-file', '9999', '--path', '~/hub/files/new/x.pdf'], env);
+  const unknown = runHub(['move-file', '9999', '--path', '~/hub/files/new/x.pdf'], env);
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /no file with id 9999/);
 });

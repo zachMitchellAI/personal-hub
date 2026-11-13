@@ -7,31 +7,14 @@
 //   4. slug derivation "Casey Smith" → "casey-smith"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fixturePerson, makeTmp, personArgs, runHub } from './helpers.ts';
 
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s2-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+// Factory people: pool[1] = Casey Smith, pool[2] = Ada Lovelace.
+const P1 = fixturePerson(1);
+const P2 = fixturePerson(2);
 
 // Scenario 1 — row persists and its id is stable.
 test('S2: person with slug casey-smith persists with a stable id', (t) => {
@@ -40,30 +23,30 @@ test('S2: person with slug casey-smith persists with a stable id', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
 
-  const add = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const add = runHub([...personArgs(P1), '--json'], env);
   assert.equal(add.status, 0, add.stderr);
   const out = JSON.parse(add.stdout);
   assert.equal(out.verb, 'add-person');
-  assert.equal(out.slug, 'casey-smith');
+  assert.equal(out.slug, P1.slug);
   assert.equal(out.id, 1);
 
   // id is stable across a second CLI process and a raw reopen.
-  const get = runCli(['get-person', 'casey-smith', '--json'], env);
+  const get = runHub(['get-person', P1.slug, '--json'], env);
   assert.equal(get.status, 0, get.stderr);
   const got = JSON.parse(get.stdout);
   assert.equal(got.id, out.id);
-  assert.equal(got.display_name, 'Casey Smith');
+  assert.equal(got.display_name, P1.name);
 
   // A second person gets a different id; the first id does not shift.
-  const add2 = runCli(['add-person', '--name', 'Ada Lovelace', '--json'], env);
+  const add2 = runHub([...personArgs(P2), '--json'], env);
   assert.equal(add2.status, 0, add2.stderr);
   assert.equal(JSON.parse(add2.stdout).id, 2);
-  const gotAgain = JSON.parse(runCli(['get-person', 'casey-smith', '--json'], env).stdout);
+  const gotAgain = JSON.parse(runHub(['get-person', P1.slug, '--json'], env).stdout);
   assert.equal(gotAgain.id, out.id);
 
   const db = new DatabaseSync(dbPath);
   try {
-    const row = db.prepare('SELECT id, slug FROM people WHERE slug = ?').get('casey-smith') as
+    const row = db.prepare('SELECT id, slug FROM people WHERE slug = ?').get(P1.slug) as
       { id: number; slug: string } | undefined;
     assert.ok(row, 'row must persist');
     assert.equal(row.id, out.id);
@@ -79,10 +62,10 @@ test('S2: duplicate slug insert fails with a UNIQUE constraint error', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
 
-  const first = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const first = runHub([...personArgs(P1), '--json'], env);
   assert.equal(first.status, 0, first.stderr);
 
-  const second = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const second = runHub([...personArgs(P1), '--json'], env);
   assert.notEqual(second.status, 0);
   assert.match(second.stderr, /already exists/);
 
@@ -95,7 +78,7 @@ test('S2: duplicate slug insert fails with a UNIQUE constraint error', (t) => {
       () =>
         db
           .prepare('INSERT INTO people (slug, display_name, created_at) VALUES (?, ?, ?)')
-          .run('casey-smith', 'Casey Smith', '2026-01-01'),
+          .run(P1.slug, P1.name, '2026-01-01'),
       (err: Error) => /UNIQUE constraint failed/.test(err.message),
     );
   } finally {
@@ -110,10 +93,10 @@ test('S2: person without relationship_type stores NULL', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
 
-  const add = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const add = runHub([...personArgs(P1), '--json'], env);
   assert.equal(add.status, 0, add.stderr);
 
-  const got = JSON.parse(runCli(['get-person', 'casey-smith', '--json'], env).stdout);
+  const got = JSON.parse(runHub(['get-person', P1.slug, '--json'], env).stdout);
   assert.equal(got.relationship_type, null);
   assert.notEqual(got.relationship_type, '');
   assert.notEqual(got.relationship_type, 'unknown');
@@ -121,7 +104,7 @@ test('S2: person without relationship_type stores NULL', (t) => {
   // Raw check: the column is genuinely NULL in storage.
   const db = new DatabaseSync(dbPath);
   try {
-    const row = db.prepare('SELECT relationship_type FROM people WHERE slug = ?').get('casey-smith') as {
+    const row = db.prepare('SELECT relationship_type FROM people WHERE slug = ?').get(P1.slug) as {
       relationship_type: string | null;
     };
     assert.equal(row.relationship_type, null);
@@ -130,9 +113,10 @@ test('S2: person without relationship_type stores NULL', (t) => {
   }
 
   // And when provided, it stores the literal free-text value (no enum).
-  const add2 = runCli(['add-person', '--name', 'Ada Lovelace', '--relationship-type', 'professional', '--json'], env);
+  // Hand-rolled, not personArgs: --relationship-type is the flag under test.
+  const add2 = runHub(['add-person', '--name', P2.name, '--relationship-type', 'professional', '--json'], env);
   assert.equal(add2.status, 0, add2.stderr);
-  const got2 = JSON.parse(runCli(['get-person', 'ada-lovelace', '--json'], env).stdout);
+  const got2 = JSON.parse(runHub(['get-person', P2.slug, '--json'], env).stdout);
   assert.equal(got2.relationship_type, 'professional');
 });
 
@@ -144,13 +128,14 @@ test('S2: slug derived from display_name is lowercase-dashed with no stray punct
   const env = { HUB_DB: dbPath };
 
   const cases: Array<[string, string]> = [
-    ['Casey Smith', 'casey-smith'],
+    [P1.name, P1.slug],
+    // The rest are slug edge cases the factory pool doesn't cover — literals on purpose.
     ["Mary-Jane O'Neil", 'mary-jane-oneil'],
     ['Renée Dubois', 'renee-dubois'],
     ['  Spaced   Out  Name ', 'spaced-out-name'],
   ];
   for (const [name, expected] of cases) {
-    const add = runCli(['add-person', '--name', name, '--json'], env);
+    const add = runHub(['add-person', '--name', name, '--json'], env);
     assert.equal(add.status, 0, `name: ${name} → stderr: ${add.stderr}`);
     assert.equal(JSON.parse(add.stdout).slug, expected, `name: ${name}`);
   }
@@ -163,15 +148,15 @@ test('S2: list-people returns rows ordered by slug', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
 
-  runCli(['add-person', '--name', 'Casey Smith'], env);
-  runCli(['add-person', '--name', 'Ada Lovelace'], env);
-  const list = runCli(['list-people', '--json'], env);
+  runHub(personArgs(P1), env);
+  runHub(personArgs(P2), env);
+  const list = runHub(['list-people', '--json'], env);
   assert.equal(list.status, 0, list.stderr);
   const out = JSON.parse(list.stdout);
   assert.equal(out.verb, 'list-people');
   assert.equal(out.count, 2);
   assert.deepEqual(
     out.people.map((p: { slug: string }) => p.slug),
-    ['ada-lovelace', 'casey-smith'],
+    [P2.slug, P1.slug],
   );
 });

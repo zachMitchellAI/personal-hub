@@ -19,35 +19,19 @@
 // Tests requiring Ollama skip cleanly when http://localhost:11434 is
 // unreachable (tag: skip-if-unreachable) so `npm test` stays green offline —
 // the zero-dep portability check must not gain a hard network dep.
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import * as sqliteVec from 'sqlite-vec';
-import { latestNonGatedMigrationVersion } from './helpers.ts';
+import { fixturePerson, latestNonGatedMigrationVersion, makeTmp, runHub } from './helpers.ts';
 
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s13-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+// Fixture people for the seeded partitions (PII rule: names from the factory
+// pool only). P0 owns the fatigue notes, P1 the migration-sync note.
+const P0 = fixturePerson(0);
+const P1 = fixturePerson(1);
 
 // Ollama reachability probed once per test file; embed-requiring tests skip
 // when it is down (npm test must stay green offline).
@@ -73,8 +57,8 @@ const ollamaUp = (() => {
 /** Seed two people and four interactions; returns the env for follow-up calls. */
 function seedHub(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
-  assert.equal(runCli(['add-person', '--name', 'Dana Reyes'], env).status, 0);
-  assert.equal(runCli(['add-person', '--name', 'Maya Chen'], env).status, 0);
+  assert.equal(runHub(['add-person', '--name', P0.name], env).status, 0);
+  assert.equal(runHub(['add-person', '--name', P1.name], env).status, 0);
   const adds: string[][] = [
     [
       'add-interaction',
@@ -87,7 +71,7 @@ function seedHub(dbPath: string): Record<string, string> {
       '--summary',
       'Slept terribly last night, drained by noon',
       '--person',
-      'dana-reyes',
+      P0.slug,
     ],
     [
       'add-interaction',
@@ -100,7 +84,7 @@ function seedHub(dbPath: string): Record<string, string> {
       '--summary',
       'Been so tired lately, running on empty',
       '--person',
-      'dana-reyes',
+      P0.slug,
     ],
     [
       'add-interaction',
@@ -113,7 +97,7 @@ function seedHub(dbPath: string): Record<string, string> {
       '--summary',
       'Weekly sync about the migration plan',
       '--person',
-      'maya-chen',
+      P1.slug,
     ],
     [
       'add-interaction',
@@ -128,7 +112,7 @@ function seedHub(dbPath: string): Record<string, string> {
     ],
   ];
   for (const a of adds) {
-    const r = runCli(a, env);
+    const r = runHub(a, env);
     assert.equal(r.status, 0, r.stderr);
   }
   return env;
@@ -150,7 +134,7 @@ test(
     const tmp = makeTmp();
     t.after(() => rmSync(tmp, { recursive: true, force: true }));
     const dbPath = join(tmp, 'life.db');
-    const init = runCli(['init', '--json'], { HUB_DB: dbPath });
+    const init = runHub(['init', '--json'], { HUB_DB: dbPath });
     assert.equal(init.status, 0, init.stderr);
     const status = JSON.parse(init.stdout);
     assert.ok(status.migrations_applied.includes(9), '009_semantic_search must apply');
@@ -159,9 +143,9 @@ test(
     // The singleton is only seeded on first vector write, not at migration
     // time — so this scenario writes one interaction, then inspects. Open the
     // db the way the CLI does (vec0 loaded) to query the vec0 table.
-    assert.equal(runCli(['add-person', '--name', 'Dana Reyes'], { HUB_DB: dbPath }).status, 0);
+    assert.equal(runHub(['add-person', '--name', P0.name], { HUB_DB: dbPath }).status, 0);
     assert.equal(
-      runCli(
+      runHub(
         [
           'add-interaction',
           '--kind',
@@ -173,7 +157,7 @@ test(
           '--summary',
           'Slept terribly last night',
           '--person',
-          'dana-reyes',
+          P0.slug,
         ],
         { HUB_DB: dbPath },
       ).status,
@@ -223,7 +207,7 @@ test(
 
     // "exhausted" appears in NO summary — keyword mode finds nothing, hybrid
     // must surface both fatigue notes at the top, ranked by cosine.
-    const r = runCli(['search', 'exhausted', '--json'], env);
+    const r = runHub(['search', 'exhausted', '--json'], env);
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout) as SearchJson;
     assert.equal(out.verb, 'search');
@@ -252,14 +236,14 @@ test('S13: keyword mode misses on zero shared keywords, hits on shared', (t) => 
   const dbPath = join(tmp, 'life.db');
   const env = seedHub(dbPath);
 
-  const miss = runCli(['search', 'exhausted', '--mode', 'keyword', '--json'], env);
+  const miss = runHub(['search', 'exhausted', '--mode', 'keyword', '--json'], env);
   assert.equal(miss.status, 0, miss.stderr);
   const missOut = JSON.parse(miss.stdout) as SearchJson;
   assert.equal(missOut.mode, 'keyword');
   assert.equal(missOut.count, 0);
   assert.deepEqual(missOut.results, []);
 
-  const hit = runCli(['search', 'terribly', '--mode', 'keyword', '--json'], env);
+  const hit = runHub(['search', 'terribly', '--mode', 'keyword', '--json'], env);
   assert.equal(hit.status, 0, hit.stderr);
   const hitOut = JSON.parse(hit.stdout) as SearchJson;
   assert.equal(hitOut.mode, 'keyword');
@@ -275,16 +259,16 @@ test('S13: --person prefilter excludes other partitions', { skip: ollamaUp ? fal
   const dbPath = join(tmp, 'life.db');
   const env = seedHub(dbPath);
 
-  const r = runCli(['search', 'exhausted', '--person', 'maya-chen', '--json'], env);
+  const r = runHub(['search', 'exhausted', '--person', P1.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout) as SearchJson;
-  assert.ok(out.count >= 1, 'maya-chen has the sync note');
+  assert.ok(out.count >= 1, `${P1.slug} has the sync note`);
   for (const row of out.results) {
-    assert.equal(row.person_slug, 'maya-chen', 'only maya-chen rows may appear');
+    assert.equal(row.person_slug, P1.slug, 'only the prefiltered person rows may appear');
   }
 
   // Unknown slug: empty result, not a crash (the filter matches nothing).
-  const none = runCli(['search', 'exhausted', '--person', 'nobody-here', '--json'], env);
+  const none = runHub(['search', 'exhausted', '--person', 'nobody-here', '--json'], env);
   assert.equal(none.status, 0, none.stderr);
   assert.equal(JSON.parse(none.stdout).count, 0);
 });
@@ -296,7 +280,7 @@ test('S13: --since metadata filter narrows results', { skip: ollamaUp ? false : 
   const dbPath = join(tmp, 'life.db');
   const env = seedHub(dbPath);
 
-  const r = runCli(['search', 'exhausted', '--since', '2026-10-22', '--json'], env);
+  const r = runHub(['search', 'exhausted', '--since', '2026-10-22', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout) as SearchJson;
   for (const row of out.results) {
@@ -312,7 +296,7 @@ test('S13: --k limits result count', { skip: ollamaUp ? false : 'Ollama unreacha
   const dbPath = join(tmp, 'life.db');
   const env = seedHub(dbPath);
 
-  const r = runCli(['search', 'exhausted', '--k', '1', '--json'], env);
+  const r = runHub(['search', 'exhausted', '--k', '1', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout) as SearchJson;
   assert.equal(out.count, 1);
@@ -326,7 +310,7 @@ test('S13: --json emits the snake_case search contract', { skip: ollamaUp ? fals
   const dbPath = join(tmp, 'life.db');
   const env = seedHub(dbPath);
 
-  const r = runCli(['search', 'exhausted', '--json'], env);
+  const r = runHub(['search', 'exhausted', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout) as SearchJson;
   assert.equal(out.verb, 'search');
@@ -354,9 +338,9 @@ test('S13: Ollama-down leaves the interaction row intact with a warning', (t) =>
   const env = { HUB_DB: dbPath, HUB_OLLAMA: 'http://127.0.0.1:9' }; // dead port
 
   // Person first — this scenario is about the embedding outage, not slugs.
-  assert.equal(runCli(['add-person', '--name', 'Dana Reyes'], env).status, 0);
+  assert.equal(runHub(['add-person', '--name', P0.name], env).status, 0);
 
-  const r = runCli(
+  const r = runHub(
     [
       'add-interaction',
       '--kind',
@@ -368,7 +352,7 @@ test('S13: Ollama-down leaves the interaction row intact with a warning', (t) =>
       '--summary',
       'Slept terribly last night',
       '--person',
-      'dana-reyes',
+      P0.slug,
     ],
     env,
   );
@@ -395,10 +379,10 @@ test('S13: reindex-embeddings repairs an Ollama-outage gap', { skip: ollamaUp ? 
   const deadEnv = { HUB_DB: dbPath, HUB_OLLAMA: 'http://127.0.0.1:9' };
   const liveEnv = { HUB_DB: dbPath };
 
-  assert.equal(runCli(['add-person', '--name', 'Dana Reyes'], deadEnv).status, 0);
+  assert.equal(runHub(['add-person', '--name', P0.name], deadEnv).status, 0);
   // Two adds under the outage: rows land, vectors don't.
   assert.equal(
-    runCli(
+    runHub(
       [
         'add-interaction',
         '--kind',
@@ -410,14 +394,14 @@ test('S13: reindex-embeddings repairs an Ollama-outage gap', { skip: ollamaUp ? 
         '--summary',
         'Slept terribly last night',
         '--person',
-        'dana-reyes',
+        P0.slug,
       ],
       deadEnv,
     ).status,
     0,
   );
   assert.equal(
-    runCli(
+    runHub(
       [
         'add-interaction',
         '--kind',
@@ -435,7 +419,7 @@ test('S13: reindex-embeddings repairs an Ollama-outage gap', { skip: ollamaUp ? 
   );
 
   // Backfill: both rows embedded.
-  const backfill = runCli(['reindex-embeddings', '--json'], liveEnv);
+  const backfill = runHub(['reindex-embeddings', '--json'], liveEnv);
   assert.equal(backfill.status, 0, backfill.stderr);
   const bf = JSON.parse(backfill.stdout);
   assert.equal(bf.verb, 'reindex-embeddings');
@@ -445,12 +429,12 @@ test('S13: reindex-embeddings repairs an Ollama-outage gap', { skip: ollamaUp ? 
   assert.equal(bf.total, 2);
 
   // Second run is a no-op (idempotent).
-  const again = runCli(['reindex-embeddings', '--json'], liveEnv);
+  const again = runHub(['reindex-embeddings', '--json'], liveEnv);
   assert.equal(JSON.parse(again.stdout).embedded, 0);
   assert.equal(JSON.parse(again.stdout).skipped, 2);
 
   // And the index now answers meaning queries.
-  const search = runCli(['search', 'exhausted', '--json'], liveEnv);
+  const search = runHub(['search', 'exhausted', '--json'], liveEnv);
   assert.equal(JSON.parse(search.stdout).mode, 'hybrid');
   assert.ok(JSON.parse(search.stdout).count >= 1);
 });
@@ -462,7 +446,7 @@ test('S13: reindex --force re-embeds every interaction', { skip: ollamaUp ? fals
   const dbPath = join(tmp, 'life.db');
   const env = seedHub(dbPath);
 
-  const r = runCli(['reindex-embeddings', '--force', '--json'], env);
+  const r = runHub(['reindex-embeddings', '--force', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = JSON.parse(r.stdout);
   assert.equal(out.embedded, 4, 'all four interactions re-embedded');
@@ -492,16 +476,16 @@ test('S13: vec0-absent degrades to keyword search, exit 0', (t) => {
   const dbPath = join(tmp, 'life.db');
   const noVec = { HUB_DB: dbPath, HUB_VEC0_SO: '/nonexistent/vec0.so' };
 
-  const init = runCli(['init', '--json'], noVec);
+  const init = runHub(['init', '--json'], noVec);
   assert.equal(init.status, 0, init.stderr);
   const initOut = JSON.parse(init.stdout);
   assert.ok(!initOut.migrations_applied.includes(9), '009 must be skipped without vec0');
   assert.equal(initOut.user_version, latestNonGatedMigrationVersion());
 
-  assert.equal(runCli(['add-person', '--name', 'Dana Reyes'], noVec).status, 0);
+  assert.equal(runHub(['add-person', '--name', P0.name], noVec).status, 0);
   // vec0 absent AND Ollama dead: the add must still succeed, silently
   // (no embedding warning — there is no index to maintain).
-  const add = runCli(
+  const add = runHub(
     [
       'add-interaction',
       '--kind',
@@ -513,14 +497,14 @@ test('S13: vec0-absent degrades to keyword search, exit 0', (t) => {
       '--summary',
       'Slept terribly last night',
       '--person',
-      'dana-reyes',
+      P0.slug,
     ],
     { ...noVec, HUB_OLLAMA: 'http://127.0.0.1:9' },
   );
   assert.equal(add.status, 0, add.stderr);
   assert.doesNotMatch(add.stderr, /embedding unavailable/);
 
-  const search = runCli(['search', 'terribly', '--json'], noVec);
+  const search = runHub(['search', 'terribly', '--json'], noVec);
   assert.equal(search.status, 0, search.stderr);
   const out = JSON.parse(search.stdout) as SearchJson;
   assert.equal(out.mode, 'keyword');
@@ -534,19 +518,19 @@ test('S13: usage errors reject cleanly', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = { HUB_DB: dbPath };
 
-  const badMode = runCli(['search', 'q', '--mode', 'nope', '--json'], env);
+  const badMode = runHub(['search', 'q', '--mode', 'nope', '--json'], env);
   assert.equal(badMode.status, 1);
   assert.match(badMode.stderr, /--mode/);
 
-  const badK = runCli(['search', 'q', '--k', '0'], env);
+  const badK = runHub(['search', 'q', '--k', '0'], env);
   assert.equal(badK.status, 1);
   assert.match(badK.stderr, /--k/);
 
-  const badSince = runCli(['search', 'q', '--since', 'next friday'], env);
+  const badSince = runHub(['search', 'q', '--since', 'next friday'], env);
   assert.equal(badSince.status, 1);
   assert.match(badSince.stderr, /--since/);
 
-  const noQuery = runCli(['search'], env);
+  const noQuery = runHub(['search'], env);
   assert.equal(noQuery.status, 1);
   assert.match(noQuery.stderr, /query argument required/);
 });

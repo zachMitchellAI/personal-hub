@@ -4,18 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { latestNonGatedMigrationVersion } from './helpers.ts';
+import { HUB, latestNonGatedMigrationVersion, makeTmp } from './helpers.ts';
 
-const HUB = join(import.meta.dirname, '..', 'src', 'hub.ts');
 const CONFIG = join(import.meta.dirname, '..', 'src', 'core', 'config.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-cfg-'));
-}
 
 // --- parseEnvFile: unit-level (config.ts is import-safe, no side effects) ---
 test('S13 cfg: parseEnvFile handles comments, blanks, and raw values', async () => {

@@ -3,30 +3,9 @@
 // touch the real bash-completion / ~/.hub locations.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-compl-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+import { makeTmp, runHub } from './helpers.ts';
 
 test('install-completion: bash default copies the script into the lazy-load dir', (t) => {
   const tmp = makeTmp();
@@ -34,7 +13,7 @@ test('install-completion: bash default copies the script into the lazy-load dir'
   // HOME points at the throwaway dir, so the verb cannot touch the real one.
   const dest = join(tmp, '.local', 'share', 'bash-completion', 'completions', 'hub');
 
-  const r = runCli(['install-completion', '--dest', dest, '--json'], { HOME: tmp });
+  const r = runHub(['install-completion', '--dest', dest, '--json'], { HOME: tmp });
   assert.equal(r.status, 0, `stderr: ${r.stderr}`);
   const status = JSON.parse(r.stdout);
   assert.equal(status.verb, 'install-completion');
@@ -52,7 +31,7 @@ test('install-completion: zsh target prints the source line to add', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const dest = join(tmp, 'hub', 'completion', 'hub-completion.sh');
 
-  const r = runCli(['install-completion', '--shell', 'zsh', '--dest', dest]);
+  const r = runHub(['install-completion', '--shell', 'zsh', '--dest', dest]);
   assert.equal(r.status, 0, `stderr: ${r.stderr}`);
   // One line per thing, then the follow-up instruction for zsh wiring.
   assert.ok(r.stdout.includes('zsh completion installed'));
@@ -64,7 +43,7 @@ test('install-completion: unknown --shell is rejected', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const r = runCli(['install-completion', '--shell', 'fish', '--dest', join(tmp, 'x')]);
+  const r = runHub(['install-completion', '--shell', 'fish', '--dest', join(tmp, 'x')]);
   assert.equal(r.status, 1);
   assert.ok(r.stderr.includes('unknown shell "fish"'));
 });

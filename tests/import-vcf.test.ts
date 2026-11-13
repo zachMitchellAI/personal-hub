@@ -14,17 +14,16 @@
 //   6. usage/IO errors exit 1
 //   7. parser units: folding, QP with multi-byte UTF-8 across a soft break,
 //      escapes, structured splitting, bare 2.1 type params
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { ImportVcfStatus } from '../src/core/types.ts';
 import { parseVcfCards, splitVcfStructured, unescapeVcfText } from '../src/core/vcf.ts';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
+import { HUB, type RunResult } from './helpers.ts';
 
 /** A fake JPEG: real SOI/JFIF magic (so ext sniffing sees .jpg) + EOI marker. */
 const FAKE_JPEG = Buffer.concat([
@@ -100,13 +99,7 @@ function fixtureVcf(): string {
   ].join('\n');
 }
 
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string>): RunResult {
+function runHub(args: string[], env: Record<string, string>): RunResult {
   const r = spawnSync(process.execPath, [HUB, ...args], {
     env: { ...process.env, ...env },
     encoding: 'utf8',
@@ -162,7 +155,7 @@ test('S8b: import-vcf maps names, channels, notes fold, and photos on first run'
   t.after(() => rmSync(harness.dir, { recursive: true, force: true }));
   writeFixture(harness, fixtureVcf());
 
-  const run = runCli(['import-vcf', harness.vcfPath, '--json'], harness.env);
+  const run = runHub(['import-vcf', harness.vcfPath, '--json'], harness.env);
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout) as ImportVcfStatus;
   assert.equal(out.verb, 'import-vcf');
@@ -252,11 +245,11 @@ test('S8b: re-running the same file skips everything and adds zero rows', (t) =>
   t.after(() => rmSync(harness.dir, { recursive: true, force: true }));
   writeFixture(harness, fixtureVcf());
 
-  const first = runCli(['import-vcf', harness.vcfPath, '--json'], harness.env);
+  const first = runHub(['import-vcf', harness.vcfPath, '--json'], harness.env);
   assert.equal(first.status, 0, first.stderr);
   const before = dbCounts(harness.dbPath);
 
-  const second = runCli(['import-vcf', harness.vcfPath, '--json'], harness.env);
+  const second = runHub(['import-vcf', harness.vcfPath, '--json'], harness.env);
   assert.equal(second.status, 0, second.stderr);
   const out = JSON.parse(second.stdout) as ImportVcfStatus;
   assert.equal(out.people_imported, 0);
@@ -276,7 +269,7 @@ test('S8b: --dry-run counts accurately and leaves db and disk untouched', (t) =>
   t.after(() => rmSync(harness.dir, { recursive: true, force: true }));
   writeFixture(harness, fixtureVcf());
 
-  const run = runCli(['import-vcf', harness.vcfPath, '--dry-run', '--json'], harness.env);
+  const run = runHub(['import-vcf', harness.vcfPath, '--dry-run', '--json'], harness.env);
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout) as ImportVcfStatus;
   assert.equal(out.dry_run, true);
@@ -297,7 +290,7 @@ test('S8b: duplicate slug inside one file is skipped with a reason, never suffix
   t.after(() => rmSync(harness.dir, { recursive: true, force: true }));
   writeFixture(harness, fixtureVcf());
 
-  const run = runCli(['import-vcf', harness.vcfPath, '--json'], harness.env);
+  const run = runHub(['import-vcf', harness.vcfPath, '--json'], harness.env);
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout) as ImportVcfStatus;
   const dup = out.skipped.find((s) => s.reason === 'duplicate-slug');
@@ -323,13 +316,13 @@ test('S8b: phone matching is format-insensitive against existing DB channels', (
   const seeded = 'BEGIN:VCARD\nVERSION:2.1\nN:Four;Test;Q;;;\nFN:Test Q Four\nTEL;CELL:555-010-1234\nEND:VCARD\n';
   writeFixture(harness, seeded);
 
-  assert.equal(runCli(['add-person', '--name', 'Seed Person', '--json'], harness.env).status, 0);
+  assert.equal(runHub(['add-person', '--name', 'Seed Person', '--json'], harness.env).status, 0);
   assert.equal(
-    runCli(['add-channel', 'seed-person', '--kind', 'phone', '--value', '(555) 010-1234'], harness.env).status,
+    runHub(['add-channel', 'seed-person', '--kind', 'phone', '--value', '(555) 010-1234'], harness.env).status,
     0,
   );
 
-  const run = runCli(['import-vcf', harness.vcfPath, '--json'], harness.env);
+  const run = runHub(['import-vcf', harness.vcfPath, '--json'], harness.env);
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout) as ImportVcfStatus;
   assert.equal(out.people_imported, 1, 'person still imported');
@@ -351,11 +344,11 @@ test('S8b: missing file and missing argument exit 1 with usage on stderr', (t) =
   const harness = makeHarness();
   t.after(() => rmSync(harness.dir, { recursive: true, force: true }));
 
-  const noFile = runCli(['import-vcf', join(harness.dir, 'absent.vcf')], harness.env);
+  const noFile = runHub(['import-vcf', join(harness.dir, 'absent.vcf')], harness.env);
   assert.equal(noFile.status, 1);
   assert.match(noFile.stderr, /hub import-vcf: cannot read/);
 
-  const noArg = runCli(['import-vcf'], harness.env);
+  const noArg = runHub(['import-vcf'], harness.env);
   assert.equal(noArg.status, 1);
   assert.match(noArg.stderr, /usage/);
 });

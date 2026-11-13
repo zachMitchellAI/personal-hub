@@ -10,33 +10,14 @@
 // live lookups, trackable verbs offer their own status set, distinct
 // interaction kinds come from live data, the generated shell script exists
 // and is syntactically valid bash, and a bare trailing flag word fails soft.
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { HUB, makeTmp, runHub } from './helpers.ts';
 
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
 const COMPLETION_SH = resolve(import.meta.dirname, '..', 'completion', 'hub-completion.sh');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s9-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
 
 /** Lines of stdout, ignoring the single trailing newline. */
 function lines(out: string): string[] {
@@ -97,10 +78,10 @@ const ADD_VERBS = ALL_VERBS.filter((v) => v.startsWith('add-'));
 function seedDb(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
   for (const name of ['Casey Smith', 'Dana Jones']) {
-    const add = runCli(['add-person', '--name', name], env);
+    const add = runHub(['add-person', '--name', name], env);
     assert.equal(add.status, 0, add.stderr);
   }
-  const inter = runCli(
+  const inter = runHub(
     ['add-interaction', '--kind', 'interview', '--date', '2026-10-20', '--channel', 'discord', '--summary', 'screen'],
     env,
   );
@@ -116,7 +97,7 @@ test('S9: empty partial completes all verbs one per line', (t) => {
 
   const env = seedDb(join(tmp, 'life.db'));
   for (const args of [['__complete', ''], ['__complete']]) {
-    const r = runCli(args, env);
+    const r = runHub(args, env);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(lines(r.stdout), ALL_VERBS);
   }
@@ -127,7 +108,7 @@ test('S9: "add-" prefix completes the add-* verbs', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const r = runCli(['__complete', 'add-'], { HUB_DB: join(tmp, 'life.db') });
+  const r = runHub(['__complete', 'add-'], { HUB_DB: join(tmp, 'life.db') });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(lines(r.stdout), ADD_VERBS);
 });
@@ -146,7 +127,7 @@ test('S9: "add-interaction --" completes that verb flags', (t) => {
     ['__complete', 'add-interaction --'], // quoted form, as written in the ticket
     ['__complete', 'add-interaction', '--'], // per-word form, as the shell sends it
   ]) {
-    const r = runCli(args, { HUB_DB: join(tmp, 'life.db') });
+    const r = runHub(args, { HUB_DB: join(tmp, 'life.db') });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(lines(r.stdout), expected);
   }
@@ -159,26 +140,26 @@ test('S9: required flags are marked with a trailing asterisk', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const env = { HUB_DB: join(tmp, 'life.db') };
-  const addTask = runCli(['__complete', 'add-task', '--'], env);
+  const addTask = runHub(['__complete', 'add-task', '--'], env);
   assert.equal(addTask.status, 0, addTask.stderr);
   assert.ok(lines(addTask.stdout).includes('--title*'), 'required --title must be marked');
   assert.ok(lines(addTask.stdout).includes('--context*'), 'required --context must be marked');
   assert.ok(lines(addTask.stdout).includes('--status'), 'optional --status must be clean');
   assert.ok(!lines(addTask.stdout).includes('--status*'), 'optional --status must not be marked');
 
-  const setTask = runCli(['__complete', 'set-task-status', '--'], env);
+  const setTask = runHub(['__complete', 'set-task-status', '--'], env);
   assert.equal(setTask.status, 0, setTask.stderr);
   assert.ok(lines(setTask.stdout).includes('--status*'), 'set-task-status --status is required');
 
   // A typed prefix still narrows, marker riding the match.
-  const prefix = runCli(['__complete', 'add-task', '--ti'], env);
+  const prefix = runHub(['__complete', 'add-task', '--ti'], env);
   assert.equal(prefix.status, 0, prefix.stderr);
   assert.deepEqual(lines(prefix.stdout), ['--title*']);
 
   // Required-first ordering — bash strips the marker silently, so the
   // ordering is the visible cue bash users get: required flags before
   // optional ones (link-entity --target-type* and --target* lead).
-  const linkEntity = runCli(['__complete', 'link-entity', '--'], env);
+  const linkEntity = runHub(['__complete', 'link-entity', '--'], env);
   assert.equal(linkEntity.status, 0, linkEntity.stderr);
   assert.deepEqual(lines(linkEntity.stdout), ['--target-type*', '--target*', '--note', '--db', '--json', '--help']);
 });
@@ -191,11 +172,11 @@ test('S9: --person completes live slugs from the DB', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const env = seedDb(join(tmp, 'life.db'));
-  const all = runCli(['__complete', 'add-task', '--person', ''], env);
+  const all = runHub(['__complete', 'add-task', '--person', ''], env);
   assert.equal(all.status, 0, all.stderr);
   assert.deepEqual(lines(all.stdout), ['casey-smith', 'dana-jones']);
 
-  const prefix = runCli(['__complete', 'add-task', '--person', 'ca'], env);
+  const prefix = runHub(['__complete', 'add-task', '--person', 'ca'], env);
   assert.equal(prefix.status, 0, prefix.stderr);
   assert.deepEqual(lines(prefix.stdout), ['casey-smith']);
 });
@@ -209,11 +190,11 @@ test('S9: add-task --status offers ready/in-progress/completed', (t) => {
   const env = { HUB_DB: join(tmp, 'life.db') };
   // The ticket form (per-word, empty final arg — what a shell sends on Tab)
   // and prefix narrowing (an agent asking "which statuses start with re?").
-  const all = runCli(['__complete', 'add-task', '--status', ''], env);
+  const all = runHub(['__complete', 'add-task', '--status', ''], env);
   assert.equal(all.status, 0, all.stderr);
   assert.deepEqual(lines(all.stdout), ['ready', 'in-progress', 'completed']);
 
-  const prefix = runCli(['__complete', 'add-task', '--status', 're'], env);
+  const prefix = runHub(['__complete', 'add-task', '--status', 're'], env);
   assert.equal(prefix.status, 0, prefix.stderr);
   assert.deepEqual(lines(prefix.stdout), ['ready']);
 });
@@ -224,7 +205,7 @@ test('S9: trackable verbs offer active/closed for --status', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const r = runCli(['__complete', 'set-trackable-status', '--status', ''], { HUB_DB: join(tmp, 'life.db') });
+  const r = runHub(['__complete', 'set-trackable-status', '--status', ''], { HUB_DB: join(tmp, 'life.db') });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(lines(r.stdout), ['active', 'closed']);
 });
@@ -236,11 +217,11 @@ test('S9: interaction --kind completes distinct kinds from live data', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const env = seedDb(join(tmp, 'life.db'));
-  const r = runCli(['__complete', 'add-interaction', '--kind', ''], env);
+  const r = runHub(['__complete', 'add-interaction', '--kind', ''], env);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(lines(r.stdout), ['interview']);
 
-  const empty = runCli(['__complete', 'add-interaction', '--kind', ''], { HUB_DB: join(tmp, 'empty.db') });
+  const empty = runHub(['__complete', 'add-interaction', '--kind', ''], { HUB_DB: join(tmp, 'empty.db') });
   assert.equal(empty.status, 0, empty.stderr);
   assert.equal(empty.stdout, '');
 });
@@ -255,13 +236,13 @@ test('S9: __complete stays hidden and --db routes live lookups', (t) => {
   const env = seedDb(dbPath);
   // A person exists ONLY in elsewhere.db, and HUB_DB points there — so if
   // the line-level --db did not win, completion would offer routed-person.
-  const other = runCli(['add-person', '--name', 'Routed Person'], { HUB_DB: join(tmp, 'elsewhere.db') });
+  const other = runHub(['add-person', '--name', 'Routed Person'], { HUB_DB: join(tmp, 'elsewhere.db') });
   assert.equal(other.status, 0, other.stderr);
 
-  const verbs = runCli(['__complete', ''], env);
+  const verbs = runHub(['__complete', ''], env);
   assert.ok(!verbs.stdout.includes('__complete'), 'hidden verb leaked into verb completions');
 
-  const routed = runCli(['__complete', '--db', dbPath, 'add-task', '--person', 'ca'], {
+  const routed = runHub(['__complete', '--db', dbPath, 'add-task', '--person', 'ca'], {
     HUB_DB: join(tmp, 'elsewhere.db'),
   });
   assert.equal(routed.status, 0, routed.stderr);
@@ -347,7 +328,7 @@ test('S9: partially-typed flag word completes from the raw argv', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const env = { HUB_DB: join(tmp, 'life.db') };
-  const r = runCli(['__complete', 'add-task', '--ti'], env);
+  const r = runHub(['__complete', 'add-task', '--ti'], env);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(lines(r.stdout), ['--title*']);
 });
@@ -360,14 +341,14 @@ test('S9: bare trailing flag word fails soft with value candidates', (t) => {
   const tmp = makeTmp();
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  const bare = runCli(['__complete', 'add-task', '--person'], {
+  const bare = runHub(['__complete', 'add-task', '--person'], {
     HUB_DB: join(tmp, 'life.db'),
   });
   assert.equal(bare.status, 0, bare.stderr);
   assert.equal(bare.stdout, '');
 
   const env = seedDb(join(tmp, 'seeded.db'));
-  const seeded = runCli(['__complete', 'add-task', '--person'], env);
+  const seeded = runHub(['__complete', 'add-task', '--person'], env);
   assert.equal(seeded.status, 0, seeded.stderr);
   assert.deepEqual(lines(seeded.stdout), ['casey-smith', 'dana-jones']);
 });

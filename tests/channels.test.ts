@@ -10,31 +10,10 @@
 //      per (person, kind), enforced by the CLI write path
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s3-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+import { channelArgs, fixtureChannel, fixturePerson, makeTmp, personArgs, runHub } from './helpers.ts';
 
 interface ChannelRow {
   id: number;
@@ -45,10 +24,17 @@ interface ChannelRow {
   source: string | null;
 }
 
+// Factory fixtures: pool[1] is Casey Smith; C0/C1 are the factory email
+// channels. Discord/mastodon kinds and their handle values stay literal —
+// S3's open-ended-kind contract covers strings the factory doesn't emit.
+const P1 = fixturePerson(1);
+const C0 = fixtureChannel(0);
+const C1 = fixtureChannel(1);
+
 // Shared seed: one person "casey-smith" in a throwaway DB.
 function seedPerson(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
-  const add = runCli(['add-person', '--name', 'Casey Smith', '--json'], env);
+  const add = runHub([...personArgs(P1), '--json'], env);
   assert.equal(add.status, 0, add.stderr);
   return env;
 }
@@ -72,8 +58,8 @@ test('S3: channels kind="discord" and kind="email" persist with literal kind val
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const discord = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'zach-test-0001', '--source', 'manual', '--json'],
+  const discord = runHub(
+    ['add-channel', P1.slug, '--kind', 'discord', '--value', 'zach-test-0001', '--source', 'manual', '--json'],
     env,
   );
   assert.equal(discord.status, 0, discord.stderr);
@@ -83,19 +69,16 @@ test('S3: channels kind="discord" and kind="email" persist with literal kind val
   assert.equal(dOut.value, 'zach-test-0001');
   assert.equal(dOut.primary_flag, 0);
   assert.equal(dOut.source, 'manual');
-  assert.equal(dOut.slug, 'casey-smith');
+  assert.equal(dOut.slug, P1.slug);
 
-  const email = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'test@example.test', '--json'],
-    env,
-  );
+  const email = runHub(['add-channel', P1.slug, '--kind', 'email', '--value', 'test@example.test', '--json'], env);
   assert.equal(email.status, 0, email.stderr);
   const eOut = JSON.parse(email.stdout);
   assert.equal(eOut.kind, 'email');
   assert.equal(eOut.source, null); // optional column defaults to NULL
 
   // Both persist — through the CLI listing and a raw reopen.
-  const list = runCli(['list-channels', 'casey-smith', '--json'], env);
+  const list = runHub(['list-channels', P1.slug, '--json'], env);
   assert.equal(list.status, 0, list.stderr);
   const lOut = JSON.parse(list.stdout);
   assert.equal(lOut.verb, 'list-channels');
@@ -122,16 +105,13 @@ test('S3: open-ended kinds — "mastodon" and "mastodon-different-thing" both pe
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const mastodon = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'mastodon', '--value', 'mastodon-handle', '--json'],
-    env,
-  );
+  const mastodon = runHub(['add-channel', P1.slug, '--kind', 'mastodon', '--value', 'mastodon-handle', '--json'], env);
   assert.equal(mastodon.status, 0, mastodon.stderr);
   assert.equal(JSON.parse(mastodon.stdout).kind, 'mastodon');
 
   // A kind string no schema author ever anticipated must just work.
-  const weird = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'mastodon-different-thing', '--value', 'other-handle', '--json'],
+  const weird = runHub(
+    ['add-channel', P1.slug, '--kind', 'mastodon-different-thing', '--value', 'other-handle', '--json'],
     env,
   );
   assert.equal(weird.status, 0, weird.stderr);
@@ -159,8 +139,8 @@ test('S3: deleting a person cascades — no orphaned contact_channels rows remai
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  runCli(['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'zach-test-0001'], env);
-  runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'test@example.test'], env);
+  runHub(['add-channel', P1.slug, '--kind', 'discord', '--value', 'zach-test-0001'], env);
+  runHub(['add-channel', P1.slug, '--kind', 'email', '--value', 'test@example.test'], env);
   assert.equal(rawChannels(dbPath).length, 2);
 
   // There is no remove-person verb in scope, so the delete goes through raw
@@ -169,7 +149,7 @@ test('S3: deleting a person cascades — no orphaned contact_channels rows remai
   const db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA foreign_keys = ON');
-    db.prepare('DELETE FROM people WHERE slug = ?').run('casey-smith');
+    db.prepare('DELETE FROM people WHERE slug = ?').run(P1.slug);
   } finally {
     db.close();
   }
@@ -186,21 +166,15 @@ test('S3: set-primary on the second email channel demotes the first — one prim
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const first = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'first@example.test', '--json'],
-    env,
-  );
+  const first = runHub([...channelArgs(P1.slug, C0), '--json'], env);
   assert.equal(first.status, 0, first.stderr);
-  const second = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'second@example.test', '--json'],
-    env,
-  );
+  const second = runHub([...channelArgs(P1.slug, C1), '--json'], env);
   assert.equal(second.status, 0, second.stderr);
   const firstId = JSON.parse(first.stdout).id as number;
   const secondId = JSON.parse(second.stdout).id as number;
 
   // "I set primary_flag=1 on the second" — via the CLI write path.
-  const setPrimary = runCli(['set-primary', String(secondId), '--json'], env);
+  const setPrimary = runHub(['set-primary', String(secondId), '--json'], env);
   assert.equal(setPrimary.status, 0, setPrimary.stderr);
   const sp = JSON.parse(setPrimary.stdout);
   assert.equal(sp.verb, 'set-primary');
@@ -226,27 +200,21 @@ test('S3: add-channel --primary demotes the existing primary of the same (person
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const email1 = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'first@example.test', '--primary', '--json'],
-    env,
-  );
+  const email1 = runHub([...channelArgs(P1.slug, C0), '--primary', '--json'], env);
   assert.equal(email1.status, 0, email1.stderr);
   const email1Id = JSON.parse(email1.stdout).id as number;
   assert.equal(JSON.parse(email1.stdout).primary_flag, 1);
 
   // A different kind gets its own primary — must NOT demote the email one.
-  const discord = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'zach-test-0001', '--primary', '--json'],
+  const discord = runHub(
+    ['add-channel', P1.slug, '--kind', 'discord', '--value', 'zach-test-0001', '--primary', '--json'],
     env,
   );
   assert.equal(discord.status, 0, discord.stderr);
   assert.equal(JSON.parse(discord.stdout).primary_flag, 1);
 
   // Adding a second primary email demotes the first email only.
-  const email2 = runCli(
-    ['add-channel', 'casey-smith', '--kind', 'email', '--value', 'second@example.test', '--primary', '--json'],
-    env,
-  );
+  const email2 = runHub([...channelArgs(P1.slug, C1), '--primary', '--json'], env);
   assert.equal(email2.status, 0, email2.stderr);
   const email2Id = JSON.parse(email2.stdout).id as number;
 
@@ -265,28 +233,28 @@ test('S3: error paths exit 1 — unknown slug, missing args, missing channel id'
   const dbPath = join(tmp, 'life.db');
   const env = seedPerson(dbPath);
 
-  const unknownPerson = runCli(['add-channel', 'nobody-here', '--kind', 'email', '--value', 'x@example.test'], env);
+  const unknownPerson = runHub(['add-channel', 'nobody-here', '--kind', 'email', '--value', 'x@example.test'], env);
   assert.equal(unknownPerson.status, 1);
   assert.match(unknownPerson.stderr, /no person with slug "nobody-here"/);
 
-  const unknownList = runCli(['list-channels', 'nobody-here'], env);
+  const unknownList = runHub(['list-channels', 'nobody-here'], env);
   assert.equal(unknownList.status, 1);
   assert.match(unknownList.stderr, /no person with slug "nobody-here"/);
 
-  const missingKind = runCli(['add-channel', 'casey-smith', '--value', 'x@example.test'], env);
+  const missingKind = runHub(['add-channel', P1.slug, '--value', 'x@example.test'], env);
   assert.equal(missingKind.status, 1);
-  const missingValue = runCli(['add-channel', 'casey-smith', '--kind', 'email'], env);
+  const missingValue = runHub(['add-channel', P1.slug, '--kind', 'email'], env);
   assert.equal(missingValue.status, 1);
 
-  const badSetPrimary = runCli(['set-primary', '999'], env);
+  const badSetPrimary = runHub(['set-primary', '999'], env);
   assert.equal(badSetPrimary.status, 1);
   assert.match(badSetPrimary.stderr, /no channel with id 999/);
 
-  const badRemove = runCli(['remove-channel', '999'], env);
+  const badRemove = runHub(['remove-channel', '999'], env);
   assert.equal(badRemove.status, 1);
   assert.match(badRemove.stderr, /no channel with id 999/);
 
-  const notAnId = runCli(['set-primary', 'abc'], env);
+  const notAnId = runHub(['set-primary', 'abc'], env);
   assert.equal(notAnId.status, 1);
 });
 
@@ -299,13 +267,13 @@ test('S3: list-channels orders by kind then id; remove-channel deletes exactly o
   const env = seedPerson(dbPath);
 
   // Insert out of alphabetical order on purpose.
-  const c1 = runCli(['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'd-one', '--json'], env);
-  const c2 = runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'e-one', '--json'], env);
-  const c3 = runCli(['add-channel', 'casey-smith', '--kind', 'discord', '--value', 'd-two', '--json'], env);
-  const c4 = runCli(['add-channel', 'casey-smith', '--kind', 'email', '--value', 'e-two', '--json'], env);
+  const c1 = runHub(['add-channel', P1.slug, '--kind', 'discord', '--value', 'd-one', '--json'], env);
+  const c2 = runHub(['add-channel', P1.slug, '--kind', 'email', '--value', 'e-one', '--json'], env);
+  const c3 = runHub(['add-channel', P1.slug, '--kind', 'discord', '--value', 'd-two', '--json'], env);
+  const c4 = runHub(['add-channel', P1.slug, '--kind', 'email', '--value', 'e-two', '--json'], env);
   const ids = [c1, c2, c3, c4].map((r) => JSON.parse(r.stdout).id as number);
 
-  const list = runCli(['list-channels', 'casey-smith', '--json'], env);
+  const list = runHub(['list-channels', P1.slug, '--json'], env);
   assert.equal(list.status, 0, list.stderr);
   const channels = JSON.parse(list.stdout).channels as ChannelRow[];
   assert.deepEqual(
@@ -319,7 +287,7 @@ test('S3: list-channels orders by kind then id; remove-channel deletes exactly o
   );
 
   // Remove the first discord row; the rest are untouched.
-  const removed = runCli(['remove-channel', String(ids[0]), '--json'], env);
+  const removed = runHub(['remove-channel', String(ids[0]), '--json'], env);
   assert.equal(removed.status, 0, removed.stderr);
   assert.equal(JSON.parse(removed.stdout).removed, true);
 
@@ -330,6 +298,6 @@ test('S3: list-channels orders by kind then id; remove-channel deletes exactly o
   );
 
   // list-channels reflects the removal.
-  const after = JSON.parse(runCli(['list-channels', 'casey-smith', '--json'], env).stdout);
+  const after = JSON.parse(runHub(['list-channels', P1.slug, '--json'], env).stdout);
   assert.equal(after.count, 3);
 });

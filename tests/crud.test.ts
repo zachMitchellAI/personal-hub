@@ -21,32 +21,10 @@
 //   18. merge-person: the husk case — empty person + one dangling interaction
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { fixturePerson, slugFor } from './helpers.ts';
-
-const HUB = resolve(import.meta.dirname, '..', 'src', 'hub.ts');
-
-function makeTmp(): string {
-  return mkdtempSync(join(tmpdir(), 'hub-s12-'));
-}
-
-interface RunResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-function runCli(args: string[], env: Record<string, string> = {}): RunResult {
-  const r = spawnSync(process.execPath, [HUB, ...args], {
-    env: { ...process.env, ...env },
-    encoding: 'utf8',
-  });
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
-}
+import { fixturePerson, fixtureTask, makeTmp, runHub, slugFor, taskArgs, type RunResult } from './helpers.ts';
 
 /** Parse the last stdout JSON object (verbs print exactly one object). */
 function jsonOut(r: RunResult): Record<string, unknown> {
@@ -66,15 +44,18 @@ function rawRows(dbPath: string, sql: string): Record<string, unknown>[] {
 
 const P0 = fixturePerson(0); // fixture pool[0]
 const P1 = fixturePerson(1); // Casey Smith / Sample Holdings
+const T0 = fixtureTask(0); // fixture pool task
 
 /** Seed one person + one task + one entity with a link, returning its env. */
 function seedBase(dbPath: string): Record<string, string> {
   const env = { HUB_DB: dbPath };
-  let r = runCli(['add-person', '--name', P0.name], env);
+  // Hand-rolled, not personArgs: the employer-only edit test below needs the
+  // seeded person to start WITHOUT an employer (a real null → value diff).
+  let r = runHub(['add-person', '--name', P0.name], env);
   assert.equal(r.status, 0, r.stderr);
-  r = runCli(['add-task', '--title', 'Seed task', '--context', 'test'], env);
+  r = runHub(taskArgs(T0), env);
   assert.equal(r.status, 0, r.stderr);
-  r = runCli(['add-entity', '--kind', 'company', '--label', P0.employer], env);
+  r = runHub(['add-entity', '--kind', 'company', '--label', P0.employer], env);
   assert.equal(r.status, 0, r.stderr);
   return env;
 }
@@ -87,10 +68,10 @@ test('S12: edit-person changes only provided fields (employer-only diff)', (t) =
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  const before = jsonOut(runCli(['get-person', P0.slug, '--json'], env));
-  const r = runCli(['edit-person', P0.slug, '--employer', P0.employer], env);
+  const before = jsonOut(runHub(['get-person', P0.slug, '--json'], env));
+  const r = runHub(['edit-person', P0.slug, '--employer', P0.employer], env);
   assert.equal(r.status, 0, r.stderr);
-  const after = jsonOut(runCli(['get-person', P0.slug, '--json'], env));
+  const after = jsonOut(runHub(['get-person', P0.slug, '--json'], env));
 
   // Every field except employer is byte-identical; employer changed.
   for (const key of Object.keys(before)) {
@@ -107,7 +88,7 @@ test('S12: edit-person echoes the updated row via --json', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', P0.slug, '--notes', 'lead contact', '--json'], env);
+  const r = runHub(['edit-person', P0.slug, '--notes', 'lead contact', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'edit-person');
@@ -120,7 +101,7 @@ test('S12: edit-person unknown slug exits 1', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', 'nobody-here', '--employer', 'X'], env);
+  const r = runHub(['edit-person', 'nobody-here', '--employer', 'X'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no person with slug/);
 });
@@ -130,11 +111,11 @@ test('S12: edit-person rejects --slug (identity immutable)', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', P0.slug, '--slug', 'new-slug'], env);
+  const r = runHub(['edit-person', P0.slug, '--slug', 'new-slug'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /immutable/);
   // Nothing changed.
-  const after = jsonOut(runCli(['get-person', P0.slug, '--json'], env));
+  const after = jsonOut(runHub(['get-person', P0.slug, '--json'], env));
   assert.equal(after.slug, P0.slug);
 });
 
@@ -143,7 +124,7 @@ test('S12: edit-person with no field flags exits 1 with usage', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-person', P0.slug], env);
+  const r = runHub(['edit-person', P0.slug], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /nothing to update/);
 });
@@ -157,13 +138,13 @@ test('S12: edit-channel updates kind/value, preserves primary flag', (t) => {
   const env = seedBase(dbPath);
 
   const added = jsonOut(
-    runCli(['add-channel', P0.slug, '--kind', 'email', '--value', 'a@x.com', '--primary', '--json'], env),
+    runHub(['add-channel', P0.slug, '--kind', 'email', '--value', 'a@x.com', '--primary', '--json'], env),
   );
   const channelId = added.id;
   // Make sure it is actually primary (add --primary sets it for a fresh kind).
   assert.equal(added.primary_flag, 1);
 
-  const r = runCli(
+  const r = runHub(
     ['edit-channel', String(channelId), '--value', `${P0.name.split(' ')[0].toLowerCase()}@example.test`],
     env,
   );
@@ -179,7 +160,7 @@ test('S12: edit-channel unknown id exits 1', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-channel', '999', '--value', 'x'], env);
+  const r = runHub(['edit-channel', '999', '--value', 'x'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no channel with id/);
 });
@@ -192,7 +173,7 @@ test('S12: edit-task updates due-date and re-points person by slug', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  const r = runCli(['edit-task', '1', '--due-date', '2026-11-17', '--person', P0.slug, '--json'], env);
+  const r = runHub(['edit-task', '1', '--due-date', '2026-11-17', '--person', P0.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'edit-task');
@@ -206,7 +187,7 @@ test('S12: edit-task rejects fuzzy due dates', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-task', '1', '--due-date', 'next friday'], env);
+  const r = runHub(['edit-task', '1', '--due-date', 'next friday'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /ISO date/);
 });
@@ -216,7 +197,7 @@ test('S12: edit-task unknown id exits 1', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['edit-task', '999', '--title', 'X'], env);
+  const r = runHub(['edit-task', '999', '--title', 'X'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no task with id/);
 });
@@ -228,7 +209,7 @@ test('S12: edit-task unknown person slug exits 1 without touching the row', (t) 
   const env = seedBase(dbPath);
 
   const before = rawRows(dbPath, 'SELECT * FROM tasks WHERE id = 1')[0];
-  const r = runCli(['edit-task', '1', '--person', 'ghost'], env);
+  const r = runHub(['edit-task', '1', '--person', 'ghost'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no person with slug/);
   const after = rawRows(dbPath, 'SELECT * FROM tasks WHERE id = 1')[0];
@@ -243,11 +224,11 @@ test('S12: delete-task cascades subtasks', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  assert.equal(runCli(['add-subtask', '1', '--label', 'step one'], env).status, 0);
-  assert.equal(runCli(['add-subtask', '1', '--label', 'step two'], env).status, 0);
+  assert.equal(runHub(['add-subtask', '1', '--label', 'step one'], env).status, 0);
+  assert.equal(runHub(['add-subtask', '1', '--label', 'step two'], env).status, 0);
   assert.equal(rawRows(dbPath, 'SELECT * FROM subtasks').length, 2);
 
-  const r = runCli(['delete-task', '1', '--json'], env);
+  const r = runHub(['delete-task', '1', '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'delete-task');
@@ -262,7 +243,7 @@ test('S12: delete-task unknown id exits 1', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['delete-task', '999'], env);
+  const r = runHub(['delete-task', '999'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no task with id/);
 });
@@ -273,11 +254,11 @@ test('S12: delete-entity cascades entity_links', (t) => {
   const dbPath = join(tmp, 'life.db');
   const env = seedBase(dbPath);
 
-  const r0 = runCli(['link-entity', `${slugFor(P0.employer)}`, '--target-type', 'task', '--target', '1'], env);
+  const r0 = runHub(['link-entity', `${slugFor(P0.employer)}`, '--target-type', 'task', '--target', '1'], env);
   assert.equal(r0.status, 0, r0.stderr);
   assert.equal(rawRows(dbPath, 'SELECT * FROM entity_links').length, 1);
 
-  const r = runCli(['delete-entity', `${slugFor(P0.employer)}`, '--json'], env);
+  const r = runHub(['delete-entity', `${slugFor(P0.employer)}`, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'delete-entity');
@@ -292,7 +273,7 @@ test('S12: delete-entity unknown slug exits 1', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const env = seedBase(join(tmp, 'life.db'));
 
-  const r = runCli(['delete-entity', 'ghost-entity'], env);
+  const r = runHub(['delete-entity', 'ghost-entity'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no entity with slug/);
 });
@@ -304,17 +285,17 @@ test('S12: delete-entity unknown slug exits 1', (t) => {
 function seedMergePair(dbPath: string): { env: Record<string, string> } {
   const env = { HUB_DB: dbPath };
   // Person 1: the survivor (into).
-  assert.equal(runCli(['add-person', '--name', P0.name], env).status, 0);
+  assert.equal(runHub(['add-person', '--name', P0.name], env).status, 0);
   // Person 2: the duplicate (from).
-  assert.equal(runCli(['add-person', '--name', P0.name, '--slug', `${P0.slug}-2`], env).status, 0);
+  assert.equal(runHub(['add-person', '--name', P0.name, '--slug', `${P0.slug}-2`], env).status, 0);
   // Children on BOTH rows — after the merge everything lives on person 1.
   assert.equal(
-    runCli(['add-channel', `${P0.slug}-2`, '--kind', 'email', '--value', 'dup@x.com', '--primary'], env).status,
+    runHub(['add-channel', `${P0.slug}-2`, '--kind', 'email', '--value', 'dup@x.com', '--primary'], env).status,
     0,
   );
-  assert.equal(runCli(['add-channel', P0.slug, '--kind', 'phone', '--value', '555-0100'], env).status, 0);
+  assert.equal(runHub(['add-channel', P0.slug, '--kind', 'phone', '--value', '555-0100'], env).status, 0);
   assert.equal(
-    runCli(
+    runHub(
       [
         'add-interaction',
         '--kind',
@@ -333,15 +314,15 @@ function seedMergePair(dbPath: string): { env: Record<string, string> } {
     0,
   );
   assert.equal(
-    runCli(
+    runHub(
       ['add-task', '--title', `${P0.name.split(' ')[0]} follow-up`, '--context', 'test', '--person', `${P0.slug}-2`],
       env,
     ).status,
     0,
   );
-  assert.equal(runCli(['add-entity', '--kind', 'company', '--label', P1.employer], env).status, 0);
+  assert.equal(runHub(['add-entity', '--kind', 'company', '--label', P1.employer], env).status, 0);
   assert.equal(
-    runCli(['link-entity', slugFor(P1.employer), '--target-type', 'person', '--target', `${P0.slug}-2`], env).status,
+    runHub(['link-entity', slugFor(P1.employer), '--target-type', 'person', '--target', `${P0.slug}-2`], env).status,
     0,
   );
   return { env };
@@ -353,7 +334,7 @@ test('S12: merge-person moves all children and deletes the husk (json counts exa
   const dbPath = join(tmp, 'life.db');
   const { env } = seedMergePair(dbPath);
 
-  const r = runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug, '--json'], env);
+  const r = runHub(['merge-person', `${P0.slug}-2`, '--into', P0.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.equal(out.verb, 'merge-person');
@@ -384,7 +365,7 @@ test('S12: merge-person human output prints the moved-count summary', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  const r = runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug], env);
+  const r = runHub(['merge-person', `${P0.slug}-2`, '--into', P0.slug], env);
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, new RegExp(`merged ${P0.slug}-2 into ${P0.slug}`));
   assert.match(r.stdout, /channels 1, interactions 1, files 0, tasks 1, links 1/);
@@ -396,7 +377,7 @@ test('S12: merge-person preserves primary flags across the move', (t) => {
   const dbPath = join(tmp, 'life.db');
   const { env } = seedMergePair(dbPath);
 
-  assert.equal(runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug], env).status, 0);
+  assert.equal(runHub(['merge-person', `${P0.slug}-2`, '--into', P0.slug], env).status, 0);
   // The from-person's primary email moved intact — still primary_flag 1,
   // same value, no delete+recreate side effects.
   const rows = rawRows(dbPath, "SELECT value, primary_flag FROM contact_channels WHERE kind = 'email'");
@@ -410,7 +391,7 @@ test('S12: merge-person refuses from == into', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  const r = runCli(['merge-person', P0.slug, '--into', P0.slug], env);
+  const r = runHub(['merge-person', P0.slug, '--into', P0.slug], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /into itself/);
   assert.equal(rawRows(join(tmp, 'life.db'), 'SELECT COUNT(*) AS n FROM people')[0].n, 2);
@@ -421,10 +402,10 @@ test('S12: merge-person refuses unknown slugs', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  let r = runCli(['merge-person', 'ghost', '--into', P0.slug], env);
+  let r = runHub(['merge-person', 'ghost', '--into', P0.slug], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no person with slug "ghost"/);
-  r = runCli(['merge-person', `${P0.slug}-2`, '--into', 'ghost'], env);
+  r = runHub(['merge-person', `${P0.slug}-2`, '--into', 'ghost'], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /no person with slug "ghost"/);
   assert.equal(rawRows(join(tmp, 'life.db'), 'SELECT COUNT(*) AS n FROM people')[0].n, 2);
@@ -435,7 +416,7 @@ test('S12: merge-person without --into exits 1 with usage', (t) => {
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const { env } = seedMergePair(join(tmp, 'life.db'));
 
-  const r = runCli(['merge-person', `${P0.slug}-2`], env);
+  const r = runHub(['merge-person', `${P0.slug}-2`], env);
   assert.equal(r.status, 1);
   assert.match(r.stderr, /usage: hub merge-person/);
 });
@@ -464,7 +445,7 @@ test('S12: merge-person is atomic — a forced child-row failure moves nothing',
   const blocker = new DatabaseSync(dbPath);
   blocker.exec('BEGIN EXCLUSIVE');
   try {
-    const r = runCli(['merge-person', `${P0.slug}-2`, '--into', P0.slug, '--json'], env);
+    const r = runHub(['merge-person', `${P0.slug}-2`, '--into', P0.slug, '--json'], env);
     assert.equal(r.status, 1);
     assert.ok(r.stderr.length > 0);
     // Nothing moved, nobody deleted.
@@ -492,11 +473,11 @@ test('S12: merge-person handles the husk case (empty person, one dangling intera
   // The live pattern from 2026-10-27: husk row (no children) + one interaction
   // still pointing at it.
   assert.equal(
-    runCli(['add-person', '--name', `${P0.name.split(' ')[0]} husk`, '--slug', `${P0.slug}-husk`], env).status,
+    runHub(['add-person', '--name', `${P0.name.split(' ')[0]} husk`, '--slug', `${P0.slug}-husk`], env).status,
     0,
   );
   assert.equal(
-    runCli(
+    runHub(
       [
         'add-interaction',
         '--kind',
@@ -515,7 +496,7 @@ test('S12: merge-person handles the husk case (empty person, one dangling intera
     0,
   );
 
-  const r = runCli(['merge-person', `${P0.slug}-husk`, '--into', P0.slug, '--json'], env);
+  const r = runHub(['merge-person', `${P0.slug}-husk`, '--into', P0.slug, '--json'], env);
   assert.equal(r.status, 0, r.stderr);
   const out = jsonOut(r);
   assert.deepEqual(out.moved, { channels: 0, interactions: 1, files: 0, tasks: 0, links: 0 });
