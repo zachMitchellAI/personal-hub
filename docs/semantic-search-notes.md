@@ -1,6 +1,6 @@
 # Semantic Search for the Hub — Embeddings + sqlite-vec
 
-*Written 2026-10-21 (). Companion to this evening's call. Aimed at a future demo/episode in personal-hub.*
+*Written 2026-10-21. Companion to this evening's call. Aimed at a future demo/episode in personal-hub.*
 
 ## The idea in one sentence
 Add a **vector column** to the hub's SQLite tables so notes can be found by **meaning**, not just keywords — while keeping everything in the one `life.db` file.

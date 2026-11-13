@@ -8,7 +8,7 @@ returned id not found"); row→snake_case `*Json` mappers; validate-CLI-first/DB
 Question: is this "wet" boilerplate worth factoring for readability, or does the duplication
 earn its keep?
 
-**Position to debate when picked up (from , 2026-10-22):**
+**Position to debate when picked up (2026-10-22):**
 - DRY applies to duplicated *knowledge*, not duplicated *shape*. The verbs share plumbing, not
   rules — each has its own required flags, defaults, error mapping (`trackables_status_check` vs
   `FOREIGN KEY constraint failed` vs none), and JSON contract. A generic CRUD engine would need a

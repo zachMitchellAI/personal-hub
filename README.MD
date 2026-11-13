@@ -102,7 +102,7 @@ By convention, files are linked by default nearby the hub. One example path:
 ~/hub/files/slug-for-entity-or-person/user-icon.png
 ```
 
-Internally there's nothing stopping someone from linking a file *anywhere* in the file-system as long as the path resolves. (One silly example: GVFS mounts, so `/run/user/1000/gvfs/sftp:host=,user=zachary` - a remote host via `ssh`). Despite flexibility, it's good to have things kept in one place (`~/hub/files`), but up to you!
+Internally there's nothing stopping someone from linking a file *anywhere* in the file-system as long as the path resolves. Despite flexibility, it's good to have things kept in one place (`~/hub/files`), but up to you!
 
 * `kind` has the file extension, so `jpg`, `pdf`, `md`
 * `task` links this to a **task**
