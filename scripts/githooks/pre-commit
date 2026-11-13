@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Wire via: git config core.hooksPath scripts/githooks
+exec "$(dirname "$0")/../pii-gate.sh"

@@ -1,0 +1,14 @@
+# pii-gate allowlist — documented fictional fixture vocabulary only.
+# Every line is an ERE matched against full "file:line" scan output.
+# NEVER put real names, emails, or phone numbers here — that would be the
+# leak wearing the guard's uniform (see research/pii-commit-gate-contract.md).
+
+# Documented example/test domains used by factory fixtures.
+@[A-Za-z0-9.-]+\.test
+@example\.org
+acme\.corp
+
+# Fictional fixture persons (AGENTS.md fixture discipline rule).
+@marla-sample|@casey-smith|@ada-lovelace
+Marla[ _-]?Sample[0-9]*@
+Casey[ _-]?Smith[0-9]*@
