@@ -88,8 +88,7 @@ function personSlugs(db: DatabaseSync): string[] {
 }
 
 /**
- * Distinct interaction kinds in the DB, sorted. Kinds are data (the design notes
- * D3), so the live set is the truth — a kind that was never used offers
+ * Distinct interaction kinds in the DB, sorted. Kinds are data (by design decision: kinds are data, not schema), so the live set is the truth — a kind that was never used offers
  * nothing, one that was used once offers itself.
  * @param db - An open completion connection.
  * @returns The sorted distinct kind list.
