@@ -145,8 +145,9 @@ src/
 
 ## PII commit gate (task #45, 2026-11-13)
 
-The repo carries a PII leak gate: `scripts/pii-gate.sh`. It is defense-in-depth
-for the 2026-10-30 incident class (real people walking into test fixtures).
+The repo carries a PII leak gate: `scripts/pii-gate.sh`. It is standing
+defense-in-depth against real personal data appearing in fixtures, docs, or
+other committed content.
 
 - **Pattern layer** (always runs): SSN/phone/email regexes, allowlist in
   `scripts/pii-gate-allowlist.txt` — fictional fixture vocabulary only.
@@ -162,3 +163,12 @@ for the 2026-10-30 incident class (real people walking into test fixtures).
   `scripts/githooks/pre-commit` wrapper invokes the gate (see scripts/githooks/).
 - CI note: gate + tests need git, bash, sqlite3 CLI — present on local dev
   machines and GitHub ubuntu runners.
+
+## Repo tiers (see GOVERNANCE.md)
+
+- The repo follows a tiered trust model (full policy in GOVERNANCE.md):
+  canonical repo as the sole work seed, private agent repo as the sandbox
+  (force-pushes fine), public repo human-gated (agents author PRs, owner
+  merges).
+- Promotion to public requires the audit gate in GOVERNANCE.md (two
+  independent fresh-clone full-history greps, 0 hits, owner rubber-stamp).
